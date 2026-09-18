@@ -71,3 +71,16 @@
     MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase)
     RETURN c.status AS status, count(c) AS cases
     ORDER BY status
+
+- name: ChatwootCompanies
+  description: >-
+    Every company that has ever raised a case, with how many and how many are still open. THE
+    answer for "which companies does support deal with". Reading it also keys each of them to
+    the business vocabulary's CustomerAccount, which is how an account-level surface comes to
+    know about a company only support has heard of.
+  outputLabel: SupportedCompanyRow
+  cypher: |
+    MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase)
+    RETURN c.accountKey AS account, c.requesterCompany AS company, count(c) AS cases,
+           sum(CASE WHEN c.status IN ['open', 'pending'] THEN 1 ELSE 0 END) AS openCases
+    ORDER BY openCases DESC, cases DESC
