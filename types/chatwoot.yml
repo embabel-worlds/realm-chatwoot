@@ -45,14 +45,19 @@
     conversation custom attributes the desk maintains; everything else is Chatwoot's own.
   properties:
     id: { identity: true, description: "Chatwoot's conversation number, as shown in its UI and its URLs." }
-    accountKey: "The requester's company domain (custom attribute account_key)."
+    # Keys the vocabulary's CustomerAccount spine. A company support is helping may be one the
+    # CRM does not track and billing does not invoice; without this it is an account nowhere, and
+    # an account-level view cannot see the very customers most likely to be falling through.
+    accountKey:
+      hub: CustomerAccount
+      description: "The requester's company domain (custom attribute account_key)."
     subject: "One line saying what the case is about (custom attribute subject)."
     status: "open, pending, resolved — or snoozed, Chatwoot's own fourth state."
     priority: "urgent, high, medium or low; empty when none was set."
     kind: "bug, feature-request, question, documentation or enhancement (custom attribute kind)."
     requesterEmail: "The contact's email."
     requesterName: "The contact's name."
-    requesterCompany: "The company name the contact gave."
+    requesterCompany: { description: "The company name the contact gave.", metadata: { canonical: name } }
     openedOn: "The day the customer raised it (custom attribute opened_on)."
     updatedOn: "The day anything last happened on it (custom attribute updated_on)."
     closedOn: "The day it was resolved (custom attribute closed_on); empty while open."
