@@ -1,0 +1,102 @@
+# A disposable Chatwoot (open source customer support) for this realm to be proved
+# against. The full product, UI included, on http://localhost:3100 — first boot only
+# spares you the onboarding form and the trip to your profile for an access token.
+#
+# Stands alone (`docker compose up -d` here) or is pulled into a larger stack by
+# `include:`; every service and volume is prefixed so the merge cannot collide.
+#
+# Order is declared, not remembered: database and redis -> init (secrets, schema, the
+# account, its agent, an API inbox, the token; exits) -> web and sidekiq.
+#
+# The token and sign-in land in the `chatwoot-state` volume as /state/chatwoot.env.
+
+x-chatwoot: &chatwoot
+  # Pinned one release behind the newest on purpose: a tag published this morning is not
+  # a tag a demo should discover problems with.
+  image: chatwoot/chatwoot:v4.17.1
+  environment: &chatwoot-env
+    RAILS_ENV: production
+    NODE_ENV: production
+    INSTALLATION_ENV: docker
+    FRONTEND_URL: http://localhost:${CHATWOOT_PORT:-3100}
+    FORCE_SSL: "false"
+    ENABLE_ACCOUNT_SIGNUP: "false"
+    POSTGRES_HOST: chatwoot-db
+    POSTGRES_DATABASE: chatwoot
+    POSTGRES_USERNAME: chatwoot
+    POSTGRES_PASSWORD: chatwoot
+    REDIS_URL: redis://chatwoot-redis:6379
+    RAILS_LOG_TO_STDOUT: "true"
+    ACTIVE_STORAGE_SERVICE: local
+  volumes:
+    - chatwoot-state:/state
+    - chatwoot-storage:/app/storage
+
+services:
+  chatwoot-db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: chatwoot
+      POSTGRES_USER: chatwoot
+      POSTGRES_PASSWORD: chatwoot
+    volumes:
+      - chatwoot-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatwoot -d chatwoot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  chatwoot-redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  chatwoot-init:
+    <<: *chatwoot
+    depends_on:
+      chatwoot-db: { condition: service_healthy }
+      chatwoot-redis: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "/stack/init.sh"]
+    volumes:
+      - ./init.sh:/stack/init.sh:ro
+      - ./bootstrap.rb:/stack/bootstrap.rb:ro
+      - chatwoot-state:/state
+      - chatwoot-storage:/app/storage
+    restart: "no"
+
+  chatwoot:
+    <<: *chatwoot
+    depends_on:
+      chatwoot-init: { condition: service_completed_successfully }
+    entrypoint: ["/bin/sh", "-c", "set -a; . /state/secrets.env; set +a; exec docker/entrypoints/rails.sh \"$$@\"", "--"]
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    ports:
+      - "${CHATWOOT_PORT:-3100}:3000"
+    healthcheck:
+      # 127.0.0.1, not localhost: in this image localhost resolves to ::1 first and Rails
+      # is bound to IPv4 only, so the friendlier name reports a healthy server as down.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  chatwoot-sidekiq:
+    <<: *chatwoot
+    depends_on:
+      chatwoot-init: { condition: service_completed_successfully }
+    entrypoint: ["/bin/sh", "-c", "set -a; . /state/secrets.env; set +a; exec \"$$@\"", "--"]
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    restart: unless-stopped
+
+volumes:
+  chatwoot-db:
+  chatwoot-state:
+  chatwoot-storage:
