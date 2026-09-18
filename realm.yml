@@ -1,12 +1,13 @@
 name: chatwoot
 description: >-
-  Chatwoot, the open source customer support inbox, as an Embabel realm: a conversation is a
-  SupportCase of the business vocabulary. NOT A LOADABLE REALM YET — today this holds only
-  what stands beside one: `stack/`, a disposable Chatwoot in Docker with its first boot
-  automated, and `seed/load_book.py`, which loads the support part of a neutral book through
-  Chatwoot's own API. The API description, types and producers come next.
-version: 0.0.1
-# Not ready to be offered: there is nothing here for a world to load yet.
+  Chatwoot, the open source customer support inbox, through its OWN application API — never
+  the database. A conversation is a SupportCase and a message a SupportMessage of the
+  business vocabulary (realm-business-vocabulary, installed first), so a question asked about
+  support cases is answered here without naming Chatwoot. Every type is virtual: nothing is
+  mirrored, and a change made in Chatwoot's own UI is what the next query sees.
+version: 0.1.0
+# Works and reconciles against Chatwoot, but the realms that make it useful are still being
+# built, and part of the vocabulary's contract cannot be met yet (see the README).
 maturity: experimental
 author: Rod Johnson
 tags:

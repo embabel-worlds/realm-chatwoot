@@ -33,7 +33,7 @@ from pathlib import Path
 # Shown on every conversation in Chatwoot's sidebar. Declared up front because Chatwoot
 # stores an undeclared attribute but will not display it, and a date nobody can see is
 # not much of a date. Display types are Chatwoot's own: 0 text, 1 number, 5 date.
-ATTRIBUTES = [("case_id", "Case id", 0), ("account_key", "Account", 0), ("kind", "Kind", 0),
+ATTRIBUTES = [("case_id", "Case id", 0), ("subject", "Subject", 0), ("account_key", "Account", 0), ("kind", "Kind", 0),
               ("opened_on", "Opened on", 5), ("updated_on", "Last updated on", 5),
               ("closed_on", "Closed on", 5), ("reply_count", "Replies", 1),
               ("engineers", "Engineers", 0), ("milestone", "Milestone", 0)]
@@ -123,7 +123,10 @@ def load(cw, inbox, book):
         behalf = c["filed_on_behalf"] == "yes"
         body = {"source_id": source, "inbox_id": inbox, "contact_id": cid, "status": "open",
                 "custom_attributes": {k: v for k, v in {
-                    "case_id": c["source_id"], "account_key": c["account_key"], "kind": c["kind"],
+                    # Chatwoot is an inbox and a conversation has no subject of its own; the
+                    # realm reads this one, so a case can be listed by what it is about.
+                    "case_id": c["source_id"], "subject": c["subject"],
+                    "account_key": c["account_key"], "kind": c["kind"],
                     "opened_on": c["opened_on"], "updated_on": c["updated_on"], "closed_on": c["closed_on"],
                     "reply_count": int(c["reply_count"]), "engineers": c["engineers"], "milestone": c["milestone"]}.items() if v != ""}}
         conv = cw.call("POST", "/conversations", body)["id"]

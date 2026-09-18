@@ -1,0 +1,188 @@
+{
+ "openapi": "3.0.3",
+ "info": {
+  "title": "Chatwoot application API (curated)",
+  "version": "1.0",
+  "description": "The handful of Chatwoot application-API operations realm-chatwoot's producers use, scoped to ONE account: the account id is part of the server URL, because it is a fact about the install and not about any request."
+ },
+ "servers": [
+  {
+   "url": "http://host.docker.internal:3100/api/v1/accounts/1"
+  }
+ ],
+ "security": [
+  {
+   "ChatwootAccessToken": []
+  }
+ ],
+ "components": {
+  "securitySchemes": {
+   "ChatwootAccessToken": {
+    "type": "apiKey",
+    "in": "header",
+    "name": "api_access_token",
+    "description": "A user's access token (Profile settings -> Access Token). Reads see what that user may see."
+   }
+  }
+ },
+ "paths": {
+  "/conversations": {
+   "get": {
+    "operationId": "chatwootConversationsList",
+    "summary": "List conversations, one page of 25",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "all",
+        "open",
+        "resolved",
+        "pending",
+        "snoozed"
+       ]
+      },
+      "description": "Narrows at the source (verified: all 37, open 21, resolved 16 on the demo book). Chatwoot's default is `open`, so say `all` to mean it."
+     },
+     {
+      "name": "assignee_type",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "all",
+        "me",
+        "assigned",
+        "unassigned"
+       ]
+      },
+      "description": "Chatwoot's default is `me`-biased counts; `all` is the whole desk."
+     },
+     {
+      "name": "sort_by",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "`created_at_asc` gives a STABLE order. The default orders by last activity, which moves while pages are being read."
+     },
+     {
+      "name": "page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "data.payload is the page; data.meta.all_count the total",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/conversations/filter": {
+   "post": {
+    "operationId": "chatwootConversationsFilter",
+    "summary": "Conversations matching attribute filters, one page of 25",
+    "parameters": [
+     {
+      "name": "page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "payload": {
+          "type": "array",
+          "description": "Filter clauses. NOTE `values` is NOT an IN-list: given two values Chatwoot matches only the first (verified), so ask one value per call.",
+          "items": {
+           "type": "object",
+           "properties": {
+            "attribute_key": {
+             "type": "string"
+            },
+            "filter_operator": {
+             "type": "string"
+            },
+            "values": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             }
+            },
+            "custom_attribute_type": {
+             "type": "string"
+            },
+            "query_operator": {
+             "type": "string"
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "payload is the page; meta.all_count the total",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/conversations/{conversation_id}/messages": {
+   "get": {
+    "operationId": "chatwootConversationMessages",
+    "summary": "The messages of one conversation",
+    "parameters": [
+     {
+      "name": "conversation_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "payload is the list, oldest first",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

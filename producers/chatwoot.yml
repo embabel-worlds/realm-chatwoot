@@ -1,0 +1,104 @@
+# Three producers, all through Chatwoot's own application API — never its database.
+#
+# The two conversation producers carry the SAME `project`, written out twice: the host reads
+# this file without resolving YAML anchors, so there is no way to say it once. Keep them
+# identical. The vocabulary's names are on the left, Chatwoot's on the right. `project` renames; it does not compute, which is why types/chatwoot.yml lists what
+# the contract asks for and this realm cannot yet give.
+
+# The desk by status — the scan door. The anchor key IS Chatwoot's own `status` argument, so
+# the door needs no invented parameter and the narrowing happens at the source.
+- name: chatwootConversationsByStatus
+  kind: api
+  operation: chatwootConversationsList
+  records: "$.data.payload[*]"
+  keyArg: status
+  # One status per call: a page walk belongs to one status, and 'all' is a status of its own.
+  batchSafe: false
+  echoKeyAs: deskStatus
+  args:
+    assignee_type: all
+    # Load-bearing. Chatwoot's default order is by last activity, which MOVES while pages are
+    # being read: a conversation that is touched between two page reads is seen twice or not
+    # at all. Creation order does not move.
+    sort_by: created_at_asc
+  # Chatwoot's page size is fixed at 25 and it has no size argument to set.
+  paging: { style: page, param: page, size: 25, maxPages: 40 }
+  project:
+    id: id
+    accountKey: custom_attributes.account_key
+    subject: custom_attributes.subject
+    status: status
+    priority: priority
+    kind: custom_attributes.kind
+    requesterEmail: meta.sender.email
+    requesterName: meta.sender.name
+    requesterCompany: meta.sender.additional_attributes.company_name
+    openedOn: custom_attributes.opened_on
+    updatedOn: custom_attributes.updated_on
+    closedOn: custom_attributes.closed_on
+    replyCount: custom_attributes.reply_count
+    caseRef: custom_attributes.case_id
+    labels: labels
+    waitingSince: waiting_since
+  cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }
+
+# One account's cases, by the company domain the desk records on each conversation. Chatwoot's
+# filter takes a `values` array but matches only its FIRST element (verified: two domains in,
+# one domain's conversations out), so this asks one account per call and says so.
+- name: chatwootConversationsByAccount
+  kind: api
+  operation: chatwootConversationsFilter
+  records: "$.payload[*]"
+  keyArg: "payload.0.values"
+  batchSafe: false
+  echoKeyAs: accountKeyAsked
+  args:
+    payload:
+      - attribute_key: account_key
+        filter_operator: equal_to
+        values: []
+        custom_attribute_type: conversation_attribute
+  paging: { style: page, param: page, size: 25, maxPages: 20 }
+  project:
+    id: id
+    accountKey: custom_attributes.account_key
+    subject: custom_attributes.subject
+    status: status
+    priority: priority
+    kind: custom_attributes.kind
+    requesterEmail: meta.sender.email
+    requesterName: meta.sender.name
+    requesterCompany: meta.sender.additional_attributes.company_name
+    openedOn: custom_attributes.opened_on
+    updatedOn: custom_attributes.updated_on
+    closedOn: custom_attributes.closed_on
+    replyCount: custom_attributes.reply_count
+    caseRef: custom_attributes.case_id
+    labels: labels
+    waitingSince: waiting_since
+  # Most accounts have no open case, and a clean answer is worth remembering as much as a
+  # full one: without a negative TTL every quiet account is asked again on every query.
+  cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }
+
+# A conversation's thread. The conversation id is part of the path, so this is one call per
+# conversation by construction.
+- name: chatwootMessagesByConversation
+  kind: api
+  keyType: int
+  operation: chatwootConversationMessages
+  records: "$.payload[*]"
+  # STRING mode, not list mode: `keyArg` would hand the path a JSON list, and Chatwoot was
+  # asked for conversation "[182]" (a 404, reported honestly as a missing key). The template
+  # renders the one key of each call into the path as itself.
+  keyTemplate: "{key}"
+  args:
+    conversation_id: "{keys}"
+  batchSafe: false
+  echoKeyAs: conversationKey
+  project:
+    id: id
+    body: content
+    messageType: message_type
+    internal: private
+    sentAt: created_at
+  cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }

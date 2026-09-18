@@ -1,0 +1,94 @@
+# Chatwoot, typed as the business vocabulary's support types (realm-business-vocabulary, which
+# must be installed first). A conversation IS a SupportCase and a message IS a SupportMessage:
+# the node carries both labels, so a question asked about support cases is answered here
+# without naming Chatwoot, and keeps being answered when the helpdesk is a different product.
+#
+# EVERY type is virtual. Nothing is mirrored; a traversal reads Chatwoot at query time.
+#
+#   MATCH (d:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase)
+#   WHERE c.priority IN ['urgent', 'high']
+#   RETURN c.accountKey, c.subject, c.priority, c.openedOn
+#
+# WHERE THE SHARED PROPERTIES COME FROM. Chatwoot is an inbox: a conversation has no subject,
+# no company, and only the time its row was created. A desk that wants those records them as
+# conversation custom attributes, which is what Chatwoot provides them for, and this realm
+# reads the ones named below. seed/load_book.py writes exactly these.
+#
+# WHAT THE CONTRACT ASKS FOR AND THIS REALM CANNOT YET GIVE. A producer can rename a source
+# field; it cannot compute one. So three things the vocabulary specifies are absent here, and
+# are absent rather than faked:
+#   sourceUrl     needs a template over the conversation id. Until then an app builds it from
+#                 `id`: <chatwoot>/app/accounts/<account>/conversations/<id>.
+#   status        passes through Chatwoot's own word. Three of its four are the vocabulary's
+#                 (open, pending, resolved); `snoozed` should fold into pending and does not.
+#   fromCustomer  on a message is Chatwoot's integer message_type, exposed as `messageType`:
+#                 0 the customer wrote it, 1 an agent did, 2 is Chatwoot's own activity line.
+
+- name: ChatwootDesk
+  visibility: internal
+  userAnchor: false
+  description: >-
+    The support desk, as a door onto its conversations, pinned by the status you want:
+    'all' (the default, so a bare MATCH (d:ChatwootDesk) means the whole desk), 'open',
+    'pending', 'resolved' or 'snoozed'. The status is pushed to Chatwoot, so asking for open
+    cases fetches only those. It is not stored and does not need to exist.
+  properties:
+    status: { metadata: { identity: "true", default: "all" } }
+
+- name: ChatwootConversation
+  visibility: internal
+  userAnchor: false
+  parents: [SupportCase]
+  description: >-
+    One conversation in Chatwoot: a customer's problem, question or request, and a
+    SupportCase of the business vocabulary. accountKey, subject, kind and the three dates are
+    conversation custom attributes the desk maintains; everything else is Chatwoot's own.
+  properties:
+    id: { identity: true, description: "Chatwoot's conversation number, as shown in its UI and its URLs." }
+    accountKey: "The requester's company domain (custom attribute account_key)."
+    subject: "One line saying what the case is about (custom attribute subject)."
+    status: "open, pending, resolved — or snoozed, Chatwoot's own fourth state."
+    priority: "urgent, high, medium or low; empty when none was set."
+    kind: "bug, feature-request, question, documentation or enhancement (custom attribute kind)."
+    requesterEmail: "The contact's email."
+    requesterName: "The contact's name."
+    requesterCompany: "The company name the contact gave."
+    openedOn: "The day the customer raised it (custom attribute opened_on)."
+    updatedOn: "The day anything last happened on it (custom attribute updated_on)."
+    closedOn: "The day it was resolved (custom attribute closed_on); empty while open."
+    replyCount: { type: int, description: "How much back-and-forth there has been (custom attribute reply_count)." }
+    caseRef: "The desk's own reference for the case, where it keeps one (custom attribute case_id)."
+    labels: "Chatwoot's labels on the conversation."
+    waitingSince: { type: int, description: "Epoch seconds since when the customer has been waiting for a reply; 0 when they are not." }
+    deskStatus: "Echo of the desk status this conversation was fetched under."
+    accountKeyAsked: "Echo of the account key this conversation was fetched under."
+  virtualJoins:
+    - { anchorLabel: ChatwootDesk, relationship: HAS_CASE, keyField: status,
+        recordKeyField: deskStatus, producer: chatwootConversationsByStatus,
+        description: "Every conversation on the desk in this status ('all' for every status)." }
+    # The vocabulary's own edge, from the vocabulary's own anchor: ANY CRM realm whose accounts
+    # carry an accountKey reaches this desk's cases through it, and this realm has never heard
+    # of that CRM. One call per account — Chatwoot's filter does not take an IN-list.
+    - { anchorLabel: CustomerAccount, relationship: HAS_CASE, keyField: accountKey,
+        recordKeyField: accountKeyAsked, producer: chatwootConversationsByAccount,
+        description: "A customer account's support cases, matched on the company domain." }
+
+- name: ChatwootMessage
+  visibility: internal
+  userAnchor: false
+  parents: [SupportMessage]
+  description: >-
+    One message in a conversation's thread, and a SupportMessage of the business vocabulary.
+    Read messageType before reading the words: 0 is the customer, 1 is an agent, 2 is
+    Chatwoot's own activity line ("priority set to high") and says nothing about anyone.
+  properties:
+    id: { identity: true, description: "Chatwoot's message id." }
+    body: "The message text."
+    messageType: { type: int, description: "0 customer, 1 agent, 2 activity, 3 template." }
+    internal: { type: boolean, description: "True for a private note between staff that the customer never saw." }
+    sentAt: { type: int, description: "Epoch seconds when it was sent." }
+    conversationKey: "Echo of the conversation this message was fetched for."
+  virtualJoins:
+    - { anchorLabel: ChatwootConversation, relationship: HAS_MESSAGE, keyField: id,
+        recordKeyField: conversationKey, producer: chatwootMessagesByConversation,
+        description: "The messages of this conversation, oldest first." }

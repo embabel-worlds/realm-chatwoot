@@ -1,0 +1,18 @@
+# Chatwoot's application API — vendored and curated, not generated. Chatwoot publishes a very
+# wide spec; this pins the three operations the realm's producers actually use, each with the
+# facts about it that were found by calling it (what narrows, what silently does not).
+#
+# Auth: a user's access token in the `api_access_token` header (Profile settings -> Access
+# Token), held in CHATWOOT_API_TOKEN. The realm reads what that user may read.
+#
+# The server URL in the spec is the one install-specific fact this realm carries, and it holds
+# TWO things: where Chatwoot is as the APPLIANCE reaches it, and the account id. A real
+# install edits both.
+#
+# Every operationId is prefixed. OperationIds resolve globally across installed realms, and a
+# second helpdesk realm with a `conversationsList` of its own would silently take these calls.
+- url: chatwoot.json
+  name: chatwoot
+  type: openapi
+  auth: api-key
+  token-env: CHATWOOT_API_TOKEN

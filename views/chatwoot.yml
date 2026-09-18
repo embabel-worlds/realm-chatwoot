@@ -1,0 +1,73 @@
+# The answer surface. Every view is written against the VOCABULARY label (SupportCase,
+# SupportMessage) reached through this realm's own door, which is the point of the realm:
+# the query names Chatwoot only where it has to say which desk to open. View names carry the
+# prefix because view names resolve globally, and a second helpdesk realm would otherwise
+# silently answer for this one.
+#
+# Every row carries `caseId`, Chatwoot's own conversation number, so a surface can link a row
+# back to the conversation in Chatwoot: <chatwoot>/app/accounts/<account>/conversations/<caseId>.
+
+- name: ChatwootOpenCases
+  description: >-
+    Every case a customer is still waiting on: open conversations, most urgent first and the
+    longest-running thread first within a priority. THE answer for "what support cases are
+    open", "what are customers waiting on", "open high priority tickets" (via priority) and
+    "what is open for <company>" (via account, the company's domain).
+  outputLabel: OpenCaseRow
+  params:
+    priority:
+      type: string
+      default: ""
+      description: "Only this priority: urgent, high, medium or low. Empty = every priority."
+    account:
+      type: string
+      default: ""
+      description: "Only this customer, by company domain (e.g. wayne-ent.com). Empty = every customer."
+    limit:
+      type: int
+      default: 100
+      description: "Maximum cases."
+  cypher: |
+    MATCH (d:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase)
+    // The optional filters test plain VARIABLES, after a WITH, and that is load-bearing. Written
+    // against the node (`$priority = '' OR c.priority = $priority`), the engine lifts
+    // `c.priority = ''` out of the OR as a predicate on the fetched records, and an empty
+    // parameter then filters out every row: a view that returns nothing, with no warning.
+    WITH c, c.priority AS casePriority, c.accountKey AS caseAccount
+    WHERE ($priority = '' OR casePriority = $priority)
+      AND ($account = '' OR caseAccount = $account)
+    RETURN c.id AS caseId, c.accountKey AS account, c.requesterCompany AS company,
+           c.subject AS subject, c.priority AS priority, c.kind AS kind,
+           c.requesterName AS requester, c.openedOn AS openedOn, c.replyCount AS replies
+    ORDER BY CASE c.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2
+                             WHEN 'low' THEN 3 ELSE 4 END, c.replyCount DESC
+    LIMIT $limit
+
+- name: ChatwootOpenCasesByAccount
+  description: >-
+    Open cases counted per customer, busiest first, with how many of them are high priority
+    or worse. THE answer for "which customers have the most open support cases" and "who is
+    struggling". A customer absent from this list has nothing open — that is an answer.
+  outputLabel: AccountCaseLoadRow
+  params:
+    limit:
+      type: int
+      default: 50
+      description: "Maximum customers."
+  cypher: |
+    MATCH (d:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase)
+    RETURN c.accountKey AS account, c.requesterCompany AS company, count(c) AS openCases,
+           sum(CASE WHEN c.priority IN ['urgent', 'high'] THEN 1 ELSE 0 END) AS highPriority,
+           sum(c.replyCount) AS replies
+    ORDER BY openCases DESC, highPriority DESC, account
+    LIMIT $limit
+
+- name: ChatwootCaseCounts
+  description: >-
+    How many cases the desk holds in each status. THE answer for "how many support cases are
+    open" and "how many have we resolved".
+  outputLabel: CaseCountRow
+  cypher: |
+    MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase)
+    RETURN c.status AS status, count(c) AS cases
+    ORDER BY status
