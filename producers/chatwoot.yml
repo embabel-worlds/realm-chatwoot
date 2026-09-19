@@ -89,17 +89,17 @@
         values: ["{value}"]
         custom_attribute_type: null
       linkPrevious: { query_operator: AND }
-  # NOT declared, though the desk can answer it. The filter response carries `meta.all_count` — the
-  # count of exactly this filtered set — but no echo of WHICH account it belongs to, because this
-  # producer asks one account per call and the desk has no reason to repeat the question back.
-  # `aggregates:` requires a `keyField` so a grouped answer cannot be attributed by position, and
-  # for a one-key call there is nothing to attribute by. Declaring a field that is not there would
-  # make every count an error at fetch time. See me#1416.
+  # "How many open cases" costs ONE call instead of one per account with the records thrown away.
+  # The SAME filter call answers it — the desk already returns `meta.all_count` beside the payload,
+  # which is the count of exactly this filtered set — so no `operation:` is named.
   #
-  # aggregates:
-  #   - measure: count
-  #     valueField: meta.all_count
-  #     keyField: <nothing in the response says this>
+  # No `keyField`: this producer is `batchSafe: false`, one account per call, so the desk has no
+  # reason to echo back which account it was asked about and does not. Omitting it is legal only
+  # here; a batched source with no echo is refused, because its numbers could then only be matched
+  # by position (me#1416).
+  aggregates:
+    - measure: count
+      valueField: meta.all_count
   project:
     id: id
     accountKey: custom_attributes.account_key
