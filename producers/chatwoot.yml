@@ -59,6 +59,47 @@
         values: []
         custom_attribute_type: conversation_attribute
   paging: { style: page, param: page, size: 25, maxPages: 20 }
+  # A `WHERE c.status IN [...]` on the query reaches the DESK instead of being applied after the
+  # fetch. Structured rather than a text qualifier because this filter is JSON: each payload clause
+  # is an object, and `query_operator` on the PRECEDING one is how the desk spells AND.
+  #
+  # Verified against a running desk, because the shape is unforgiving: appending without the
+  # operator is an HTTP 500, and putting one on the LAST clause earns "Query operator must be
+  # either AND or OR" — so it cannot be declared statically here, only written at append time.
+  #
+  # Worth declaring for more than the page it saves: what the source absorbs is what lets the
+  # engine push a LIMIT and ask for a COUNT instead of the records. An undeclared filter costs a
+  # call per account.
+  pushdown:
+    - property: status
+      op: IN
+      argPath: payload.-
+      clause:
+        attribute_key: status
+        filter_operator: equal_to
+        values: "{values}"
+        custom_attribute_type: null
+      linkPrevious: { query_operator: AND }
+    - property: status
+      op: EQUALS
+      argPath: payload.-
+      clause:
+        attribute_key: status
+        filter_operator: equal_to
+        values: ["{value}"]
+        custom_attribute_type: null
+      linkPrevious: { query_operator: AND }
+  # NOT declared, though the desk can answer it. The filter response carries `meta.all_count` — the
+  # count of exactly this filtered set — but no echo of WHICH account it belongs to, because this
+  # producer asks one account per call and the desk has no reason to repeat the question back.
+  # `aggregates:` requires a `keyField` so a grouped answer cannot be attributed by position, and
+  # for a one-key call there is nothing to attribute by. Declaring a field that is not there would
+  # make every count an error at fetch time. See me#1416.
+  #
+  # aggregates:
+  #   - measure: count
+  #     valueField: meta.all_count
+  #     keyField: <nothing in the response says this>
   project:
     id: id
     accountKey: custom_attributes.account_key
