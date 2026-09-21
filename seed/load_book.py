@@ -25,6 +25,7 @@ import csv
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,19 +41,62 @@ ATTRIBUTES = [("case_id", "Case id", 0), ("subject", "Subject", 0), ("account_ke
 
 
 class Chatwoot:
-    def __init__(self, url, account, token):
+    """Chatwoot's REST API, PACED.
+
+    Chatwoot rate-limits writes, and this loader makes several calls per case. Without
+    pacing a book of any size dies partway through with `429 Retry later` — and it died
+    LOUDLY but not safely: the failure came after hundreds of conversations were already
+    created, so the run had to be removed before it could be retried, and the remove pass
+    hit the same wall. A 2,000-account book never finished loading at all, which meant
+    nothing above a couple of hundred cases could be measured.
+
+    So: a minimum gap between calls, and a retry on the statuses that mean "later" rather
+    than "no". `Retry-After` is honoured when Chatwoot sends it, because a server that
+    says how long to wait knows better than a backoff curve.
+    """
+
+    # Statuses that mean the request was fine and the moment was not.
+    RETRYABLE = (429, 500, 502, 503, 504)
+
+    def __init__(self, url, account, token, min_interval=None, max_retries=None):
         self.base, self.token = f"{url.rstrip('/')}/api/v1/accounts/{account}", token
+        # Tunable because the right pace depends on the deployment, not on this script.
+        self.min_interval = float(os.environ.get("CHATWOOT_MIN_INTERVAL", "0.08")
+                                  if min_interval is None else min_interval)
+        self.max_retries = int(os.environ.get("CHATWOOT_MAX_RETRIES", "8")
+                               if max_retries is None else max_retries)
+        self._last = 0.0
+        self.waited = 0.0  # total seconds spent backing off, so the report can say so
+
+    def _pace(self):
+        gap = self.min_interval - (time.monotonic() - self._last)
+        if gap > 0:
+            time.sleep(gap)
 
     def call(self, method, path, body=None):
-        req = urllib.request.Request(self.base + path, method=method,
-                                     data=json.dumps(body).encode() if body is not None else None,
-                                     headers={"api_access_token": self.token, "Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req) as r:
-                text = r.read()
-                return json.loads(text) if text else None
-        except urllib.error.HTTPError as e:
-            raise SystemExit(f"Chatwoot refused {method} {path}: {e.code} {e.read().decode(errors='replace')[:400]}")
+        for attempt in range(self.max_retries + 1):
+            self._pace()
+            req = urllib.request.Request(self.base + path, method=method,
+                                         data=json.dumps(body).encode() if body is not None else None,
+                                         headers={"api_access_token": self.token, "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req) as r:
+                    text = r.read()
+                    return json.loads(text) if text else None
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode(errors="replace")[:400]
+                if e.code not in self.RETRYABLE or attempt == self.max_retries:
+                    raise SystemExit(f"Chatwoot refused {method} {path}: {e.code} {detail}")
+                # Chatwoot's own number first; otherwise back off, capped so a long
+                # book cannot stall for minutes on one bad moment.
+                after = e.headers.get("Retry-After") if e.headers else None
+                delay = float(after) if after and after.replace(".", "", 1).isdigit() else min(2 ** attempt, 30)
+                self.waited += delay
+                print(f"chatwoot: {e.code} on {method} {path} — waiting {delay:g}s "
+                      f"(attempt {attempt + 1}/{self.max_retries})", file=sys.stderr)
+                time.sleep(delay)
+            finally:
+                self._last = time.monotonic()
 
     def has_case(self, case_id):
         """Whether a conversation already carries this case id.

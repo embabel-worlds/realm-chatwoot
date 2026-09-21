@@ -22,7 +22,25 @@
     # at all. Creation order does not move.
     sort_by: created_at_asc
   # Chatwoot's page size is fixed at 25 and it has no size argument to set.
-  paging: { style: page, param: page, size: 25, maxPages: 40 }
+  # Chatwoot's page size is fixed at 25 and it has no size argument, so maxPages IS the ceiling:
+  # 40 pages was 1,000 conversations, and this desk holds 1,521 open. A walk stopped at 1,000 and
+  # said so (PARTIAL_RESULT), which is honest but still 521 cases short of every per-account
+  # question asked through this door. 200 pages is 5,000, a real desk's order of magnitude.
+  #
+  # The COUNT is unaffected either way — it reads `all_count` off the envelope and has no ceiling,
+  # which is why "how many open cases" answered 1,521 exactly while the walk could only see 1,000.
+  paging: { style: page, param: page, size: 25, maxPages: 200 }
+  # "How many are open" is in the FIRST response — `all_count` beside the page — so it costs
+  # one call rather than walking forty. It matters more here than anywhere else in the realm:
+  # 25 x 40 is a hard ceiling of 1,000 conversations, above which the walk returns a
+  # PARTIAL_RESULT and its number is a floor. The count has no ceiling and is exact.
+  #
+  # `records: "$"` reads the ENVELOPE. The producer's own path selects a conversation, and a
+  # conversation carries no total — without this the measure resolves to null (me#1402).
+  aggregates:
+    - measure: count
+      valueField: data.meta.all_count
+      records: "$"
   project:
     id: id
     accountKey: custom_attributes.account_key
@@ -89,17 +107,6 @@
         values: ["{value}"]
         custom_attribute_type: null
       linkPrevious: { query_operator: AND }
-  # "How many open cases" costs ONE call instead of one per account with the records thrown away.
-  # The SAME filter call answers it — the desk already returns `meta.all_count` beside the payload,
-  # which is the count of exactly this filtered set — so no `operation:` is named.
-  #
-  # No `keyField`: this producer is `batchSafe: false`, one account per call, so the desk has no
-  # reason to echo back which account it was asked about and does not. Omitting it is legal only
-  # here; a batched source with no echo is refused, because its numbers could then only be matched
-  # by position (me#1416).
-  aggregates:
-    - measure: count
-      valueField: meta.all_count
   project:
     id: id
     accountKey: custom_attributes.account_key
