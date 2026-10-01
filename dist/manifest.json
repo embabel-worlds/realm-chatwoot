@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "generatedAt": "2026-10-01T18:26:59.310Z",
+  "entries": [
+    {
+      "namespace": "conversation",
+      "name": "addNote",
+      "description": "Add an internal note to the conversation. Only agents see it; the customer never does.",
+      "inputSchema": {
+        "type": "string"
+      },
+      "outputSchema": {
+        "type": "number"
+      },
+      "onType": "ChatwootConversation",
+      "className": "ChatwootConversation"
+    },
+    {
+      "namespace": "conversation",
+      "name": "assign",
+      "description": "Put the conversation in an agent's or a team's queue. The customer is not told.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "number"
+          },
+          "teamId": {
+            "type": "number"
+          }
+        }
+      },
+      "outputSchema": {},
+      "onType": "ChatwootConversation",
+      "className": "ChatwootConversation"
+    },
+    {
+      "namespace": "conversation",
+      "name": "neighbors",
+      "description": "Who/what this entity is connected to, related to, or works with in the knowledge graph. Inherited by every pack type, so a new type is graph- navigable for free. Walks outward `hops` (1–3, default 1); optionally filter relationship types (CSV) and cap with `limit`. Returns the connected nodes nearest-first; empty if this node isn't persisted yet.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hops": {
+            "type": "number"
+          },
+          "relTypes": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "hops": {
+              "type": "number"
+            },
+            "relPath": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "hops"
+          ]
+        }
+      },
+      "onType": "ChatwootConversation",
+      "className": "ChatwootConversation"
+    },
+    {
+      "namespace": "conversation",
+      "name": "reply",
+      "description": "Reply to the customer, on the conversation's channel. Once delivered it cannot be recalled.",
+      "inputSchema": {
+        "type": "string"
+      },
+      "outputSchema": {
+        "type": "number"
+      },
+      "onType": "ChatwootConversation",
+      "className": "ChatwootConversation"
+    },
+    {
+      "namespace": "conversation",
+      "name": "unassign",
+      "description": "Take the conversation out of whoever's queue it is in.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {},
+      "onType": "ChatwootConversation",
+      "className": "ChatwootConversation"
+    }
+  ]
+}

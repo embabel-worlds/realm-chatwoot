@@ -66,4 +66,13 @@ V=$(view ChatwootOpenCasesByAccount '{}')
 check "view: busiest account" "$TOP" "$(echo "$V" | py 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["account"], r["openCases"]))')"
 check "view: open cases summed over accounts" "$OPEN" "$(echo "$V" | py 'import json,sys; print(sum(r["openCases"] for r in json.load(sys.stdin)["data"]))')"
 
+echo "== the write verbs, against a scratch conversation =="
+# Opt-in, because it writes to the Chatwoot it is pointed at, even though it cleans up after itself.
+if [ "$VERIFY_WRITES" = 1 ]; then
+  CHATWOOT="$CHATWOOT" CHATWOOT_ACCOUNT_ID="$CHATWOOT_ACCOUNT_ID" CHATWOOT_API_TOKEN="$CHATWOOT_API_TOKEN" \
+    APPLIANCE="$APPLIANCE" AUTH="$AUTH" sh "$(dirname "$0")/verify-writes.sh" || fail=1
+else
+  echo "  SKIP: set VERIFY_WRITES=1 to exercise the write verbs"
+fi
+
 [ $fail = 0 ] && echo "ALL CHECKS PASS" || { echo "DRIFT FOUND"; exit 1; }
