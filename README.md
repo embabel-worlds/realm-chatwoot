@@ -21,6 +21,15 @@ how the rest of the business finds out what they know.
 - `apis/` — three operations of Chatwoot's application API, vendored and curated, each with
   what was found by calling it: `status` narrows at the source; `sort_by=created_at_asc` is
   the only stable order to page by; the filter endpoint's `values` is **not** an IN-list.
+  Two of them write:
+  - `chatwootConversationAssign` puts a conversation in an agent's or a team's queue
+    (`assignee_id: 0` unassigns).
+  - `chatwootMessageCreate` adds a message. `private` is required, so a reply to the customer is
+    never sent by default: `true` makes an internal note, `false` delivers it on the
+    conversation's channel, after which it cannot be recalled.
+
+  Each declares `x-embabel-effect`: what it changes, whether it can be undone, and which
+  arguments identify a repeat.
 - `types/` — `ChatwootDesk` (the door, pinned by status, default `all`),
   `ChatwootConversation` (`parents: [SupportCase]`), `ChatwootMessage`
   (`parents: [SupportMessage]`).
@@ -31,6 +40,10 @@ how the rest of the business finds out what they know.
   globally across realms.
 - `tests/verify.sh` — ground truth from Chatwoot itself, then the traversal by the
   vocabulary's labels, then the views. Exact equality, one command.
+- `tests/verify-writes.sh` — each write verb through the appliance, against a scratch contact and
+  conversation it deletes afterwards. A seeded conversation is never touched: Chatwoot cannot
+  backdate, so a note would move its last activity to now. `verify.sh` runs it with
+  `VERIFY_WRITES=1`.
 - `stack/` — a disposable Chatwoot in Docker with its first boot automated.
 - `seed/load_book.py` — loads the support part of a product-neutral book.
 

@@ -182,6 +182,130 @@
       }
      }
     }
+   },
+   "post": {
+    "operationId": "chatwootMessageCreate",
+    "summary": "Add a message to a conversation: a private note, or a reply the customer receives",
+    "description": "With `private: true` the message is an internal note only agents see. With `private: false` it is a reply, delivered to the customer on the conversation's channel (email, chat), and cannot be recalled once delivered.",
+    "x-embabel-effect": {
+     "writes": "a message in a support conversation; when not private, a message delivered to the customer",
+     "reversible": "a private note can be deleted; a reply already delivered cannot be recalled",
+     "idempotencyKey": [
+      "conversation_id",
+      "content",
+      "private"
+     ]
+    },
+    "parameters": [
+     {
+      "name": "conversation_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "content",
+         "message_type",
+         "private"
+        ],
+        "properties": {
+         "content": {
+          "type": "string"
+         },
+         "message_type": {
+          "type": "string",
+          "enum": [
+           "outgoing"
+          ],
+          "description": "Always `outgoing`: written by the team, whether as a note or a reply."
+         },
+         "private": {
+          "type": "boolean",
+          "description": "true for an internal note; false sends it to the customer. Required, so a reply is never sent by default."
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The created message",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/conversations/{conversation_id}/assignments": {
+   "post": {
+    "operationId": "chatwootConversationAssign",
+    "summary": "Assign a conversation to an agent or a team",
+    "description": "Puts a support conversation in someone's queue. Give `assignee_id` for a person or `team_id` for a team; `assignee_id: 0` unassigns. The customer is not told.",
+    "x-embabel-effect": {
+     "writes": "who a conversation is assigned to, replacing the previous assignee",
+     "reversible": "yes: assign it back",
+     "idempotencyKey": [
+      "conversation_id",
+      "assignee_id",
+      "team_id"
+     ]
+    },
+    "parameters": [
+     {
+      "name": "conversation_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "assignee_id": {
+          "type": "integer",
+          "description": "The agent's id; 0 to unassign."
+         },
+         "team_id": {
+          "type": "integer"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The assignee now holding the conversation",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
    }
   }
  }
