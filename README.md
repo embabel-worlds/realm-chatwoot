@@ -47,6 +47,23 @@ how the rest of the business finds out what they know.
 - `stack/` — a disposable Chatwoot in Docker with its first boot automated.
 - `seed/load_book.py` — loads the support part of a product-neutral book.
 
+## Working on a conversation you found
+
+`ChatwootConversation` carries methods, written in TypeScript in `src/api/conversation.ts`, so a
+conversation found by a query is worked on where it is found:
+
+| Method | Does |
+|---|---|
+| `assign({agentId?, teamId?})` | puts it in an agent's or a team's queue |
+| `unassign()` | takes it out of the queue |
+| `addNote(text)` | an internal note only agents see |
+| `reply(text)` | a reply delivered to the customer; it cannot be recalled |
+
+Writing for the team and writing to the customer are separate methods, not a flag, so a reply is
+never sent by accident. Read with `gateway.cypher.query`, bind a row with `state.set`, then call
+the method on `state.get(...)`. To change one: edit `src/api/`, `npm test`, `npm run build`, and
+commit `dist/` with it.
+
 ## Setup
 
 1. **realm-business-vocabulary installed first.** It declares `SupportCase` and
