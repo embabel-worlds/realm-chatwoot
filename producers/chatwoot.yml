@@ -29,7 +29,10 @@
   #
   # The COUNT is unaffected either way — it reads `all_count` off the envelope and has no ceiling,
   # which is why "how many open cases" answered 1,521 exactly while the walk could only see 1,000.
-  paging: { style: page, param: page, size: 25, maxPages: 200 }
+  # `total`: the list answer carries the desk's count on every page, so after page one the walk
+  # knows how many pages remain and fetches them concurrently (me#1539) — 29 pages of open cases
+  # cost about one page's latency instead of 29.
+  paging: { style: page, param: page, size: 25, maxPages: 200, total: data.meta.all_count }
   # "How many are open" is in the FIRST response — `all_count` beside the page — so it costs
   # one call rather than walking forty. It matters more here than anywhere else in the realm:
   # 25 x 40 is a hard ceiling of 1,000 conversations, above which the walk returns a
@@ -76,7 +79,7 @@
         filter_operator: equal_to
         values: []
         custom_attribute_type: conversation_attribute
-  paging: { style: page, param: page, size: 25, maxPages: 20 }
+  paging: { style: page, param: page, size: 25, maxPages: 20, total: meta.all_count }
   # A `WHERE c.status IN [...]` on the query reaches the DESK instead of being applied after the
   # fetch. Structured rather than a text qualifier because this filter is JSON: each payload clause
   # is an object, and `query_operator` on the PRECEDING one is how the desk spells AND.
