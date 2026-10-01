@@ -74,8 +74,12 @@
     # The vocabulary's own edge, from the vocabulary's own anchor: ANY CRM realm whose accounts
     # carry an accountKey reaches this desk's cases through it, and this realm has never heard
     # of that CRM. One call per account — Chatwoot's filter does not take an IN-list.
+    # ridesHub: when a query has already swept the desk (`(:ChatwootDesk {status:'all'})-[:HAS_CASE]->`),
+    # this edge is answered from those cases by the account's domain — the spine's own key — instead
+    # of one fetch per account, which is refused above 200 accounts (embabel/me#1489). The author's
+    # assertion: a sweep of ALL statuses is every case this edge should reach.
     - { anchorLabel: CustomerAccount, relationship: HAS_CASE, keyField: accountKey,
-        recordKeyField: accountKeyAsked, producer: chatwootConversationsByAccount,
+        recordKeyField: accountKeyAsked, producer: chatwootConversationsByAccount, ridesHub: true,
         description: "A customer account's support cases, matched on the company domain." }
 
 - name: ChatwootMessage
