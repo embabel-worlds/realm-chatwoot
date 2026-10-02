@@ -29,7 +29,9 @@ how the rest of the business finds out what they know.
     conversation's channel, after which it cannot be recalled.
 
   Each declares `x-embabel-effect`: what it changes, whether it can be undone, and which
-  arguments identify a repeat.
+  arguments identify a repeat. `chatwootMessageCreate` is `sensitive`, because unless the message is
+  private the customer receives it, so an agent asks a person before sending one even when its
+  authority lets it act.
 - `types/` — `ChatwootDesk` (the door, pinned by status, default `all`),
   `ChatwootConversation` (`parents: [SupportCase]`), `ChatwootMessage`
   (`parents: [SupportMessage]`).

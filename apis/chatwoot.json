@@ -194,7 +194,8 @@
       "conversation_id",
       "content",
       "private"
-     ]
+     ],
+     "sensitive": "unless private, the customer receives it"
     },
     "parameters": [
      {
