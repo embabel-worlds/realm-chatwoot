@@ -146,6 +146,10 @@
     conversation_id: "{keys}"
   batchSafe: false
   echoKeyAs: conversationKey
+  # A message's body is what a customer wrote, or what an agent wrote to them. Text from outside the
+  # business can carry instructions meant for whoever reads it, so a routine that reads it is marked,
+  # and anything it then asks a person to approve says it was drafted after reading it.
+  untrusted: customer-written messages
   project:
     id: id
     body: content
