@@ -10,6 +10,7 @@ version: 0.1.0
 # built, and part of the vocabulary's contract cannot be met yet (see the README).
 maturity: experimental
 author: Rod Johnson
+category: customers
 tags:
   - integrations
   - support
