@@ -33,6 +33,10 @@
   # knows how many pages remain and fetches them concurrently (me#1539) — 29 pages of open cases
   # cost about one page's latency instead of 29.
   paging: { style: page, param: page, size: 25, maxPages: 200, total: data.meta.all_count }
+  # The list endpoint takes the status and nothing else: an `id IN [...]` or a priority test in a
+  # query is the graph's to apply by construction, and an empty list says so, so the engine does
+  # not advise declaring a rule this source cannot honour.
+  pushdown: []
   # "How many are open" is in the FIRST response — `all_count` beside the page — so it costs
   # one call rather than walking forty. It matters more here than anywhere else in the realm:
   # 25 x 40 is a hard ceiling of 1,000 conversations, above which the walk returns a
@@ -146,6 +150,10 @@
     conversation_id: "{keys}"
   batchSafe: false
   echoKeyAs: conversationKey
+  # The thread comes back whole or not at all — Chatwoot's messages endpoint has no filter — so a
+  # `messageType = 0` in a query is always applied graph-side. Declared empty so the engine knows
+  # that is the source's shape and not a missing rule.
+  pushdown: []
   # A message's body is what a customer wrote, or what an agent wrote to them. Text from outside the
   # business can carry instructions meant for whoever reads it, so a routine that reads it is marked,
   # and anything it then asks a person to approve says it was drafted after reading it.
