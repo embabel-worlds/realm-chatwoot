@@ -9,10 +9,14 @@
 # business vocabulary's labels, then the saved views. A figure that reconciles at the view and
 # not at the traversal means the view is compensating for something, and that is a finding.
 set -e
+# Either AUTH=user:pass or TOKEN=<appliance API key>. Both go to curl through a config file, so
+# neither appears on a command line where `ps` would show it.
+AUTHCFG=$(mktemp); trap 'rm -f "$AUTHCFG"' EXIT
+if [ -n "${TOKEN:-}" ]; then printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$AUTHCFG"
+else printf 'user = "%s"\n' "${AUTH:?set AUTH (user:pass) or TOKEN}" > "$AUTHCFG"; fi
 CHATWOOT="${CHATWOOT:-http://127.0.0.1:3100}"
 APPLIANCE="${APPLIANCE:-http://127.0.0.1:11043}"
 : "${CHATWOOT_API_TOKEN:?set CHATWOOT_API_TOKEN}"; : "${CHATWOOT_ACCOUNT_ID:?set CHATWOOT_ACCOUNT_ID}"
-: "${AUTH:?set AUTH (user:pass)}"
 API="$CHATWOOT/api/v1/accounts/$CHATWOOT_ACCOUNT_ID"
 
 fail=0
@@ -22,9 +26,9 @@ check() { # name expected actual
 }
 py() { python3 -c "$1"; }
 cw() { curl -s "$API$1" -H "api_access_token: $CHATWOOT_API_TOKEN"; }
-kg() { curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
+kg() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
          -d "$(python3 -c 'import json,sys; print(json.dumps({"cypher": sys.argv[1]}))' "$1")"; }
-view() { curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'Content-Type: application/json' -d "{\"args\":$2}"; }
+view() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'Content-Type: application/json' -d "{\"args\":$2}"; }
 
 echo "== L0: ground truth, from Chatwoot directly =="
 count() { cw "/conversations?status=$1&assignee_type=all" | py 'import json,sys; print(json.load(sys.stdin)["data"]["meta"]["all_count"])'; }

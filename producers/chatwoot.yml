@@ -2,8 +2,9 @@
 #
 # The two conversation producers carry the SAME `project`, written out twice: the host reads
 # this file without resolving YAML anchors, so there is no way to say it once. Keep them
-# identical. The vocabulary's names are on the left, Chatwoot's on the right. `project` renames; it does not compute, which is why types/chatwoot.yml lists what
-# the contract asks for and this realm cannot yet give.
+# identical. The vocabulary's names are on the left, Chatwoot's on the right. `project` renames;
+# `compute:` derives what the contract asks for in a shape Chatwoot does not keep (a message's
+# fromCustomer and sentOn). types/chatwoot.yml lists what this realm still cannot give.
 
 # The desk by status — the scan door. The anchor key IS Chatwoot's own `status` argument, so
 # the door needs no invented parameter and the narrowing happens at the source.
@@ -64,7 +65,16 @@
     replyCount: custom_attributes.reply_count
     caseRef: custom_attributes.case_id
     labels: labels
+    tags: labels
     waitingSince: waiting_since
+  # The vocabulary's sourceUrl: opens the conversation in Chatwoot. The host is the demo stack's,
+  # as realm-odoo's links are; a desk elsewhere changes it here.
+  compute:
+    sourceUrl: "'http://localhost:3100/app/accounts/1/conversations/' + toString(r.id)"
+    # The vocabulary's three statuses: Chatwoot's `snoozed` is a case waiting on a date, which the
+    # vocabulary folds into pending. The desk door still takes Chatwoot's own words, so
+    # `(:ChatwootDesk {status:'snoozed'})` asks for exactly the snoozed ones.
+    status: "CASE r.status WHEN 'snoozed' THEN 'pending' ELSE r.status END"
   cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }
 
 # One account's cases, by the company domain the desk records on each conversation. Chatwoot's
@@ -130,9 +140,18 @@
     replyCount: custom_attributes.reply_count
     caseRef: custom_attributes.case_id
     labels: labels
+    tags: labels
     waitingSince: waiting_since
   # Most accounts have no open case, and a clean answer is worth remembering as much as a
   # full one: without a negative TTL every quiet account is asked again on every query.
+  # The vocabulary's sourceUrl: opens the conversation in Chatwoot. The host is the demo stack's,
+  # as realm-odoo's links are; a desk elsewhere changes it here.
+  compute:
+    sourceUrl: "'http://localhost:3100/app/accounts/1/conversations/' + toString(r.id)"
+    # The vocabulary's three statuses: Chatwoot's `snoozed` is a case waiting on a date, which the
+    # vocabulary folds into pending. The desk door still takes Chatwoot's own words, so
+    # `(:ChatwootDesk {status:'snoozed'})` asks for exactly the snoozed ones.
+    status: "CASE r.status WHEN 'snoozed' THEN 'pending' ELSE r.status END"
   cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }
 
 # A conversation's thread. The conversation id is part of the path, so this is one call per
@@ -164,4 +183,9 @@
     messageType: message_type
     internal: private
     sentAt: created_at
+  # The vocabulary's SupportMessage: fromCustomer is Chatwoot's message_type 0 (1 is an agent, 2
+  # Chatwoot's own activity line), and sentOn the day, from its epoch seconds.
+  compute:
+    fromCustomer: "r.messageType = 0"
+    sentOn: "toString(date(datetime({epochSeconds: r.sentAt})))"
   cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }

@@ -14,15 +14,14 @@
 # conversation custom attributes, which is what Chatwoot provides them for, and this realm
 # reads the ones named below. seed/load_book.py writes exactly these.
 #
-# WHAT THE CONTRACT ASKS FOR AND THIS REALM CANNOT YET GIVE. A producer can rename a source
-# field; it cannot compute one. So three things the vocabulary specifies are absent here, and
-# are absent rather than faked:
-#   sourceUrl     needs a template over the conversation id. Until then an app builds it from
-#                 `id`: <chatwoot>/app/accounts/<account>/conversations/<id>.
-#   status        passes through Chatwoot's own word. Three of its four are the vocabulary's
-#                 (open, pending, resolved); `snoozed` should fold into pending and does not.
-#   fromCustomer  on a message is Chatwoot's integer message_type, exposed as `messageType`:
-#                 0 the customer wrote it, 1 an agent did, 2 is Chatwoot's own activity line.
+# WHERE CHATWOOT'S SHAPE DIFFERS FROM THE CONTRACT, the producers' `compute:` closes the gap
+# rather than leaving it to every reader:
+#   sourceUrl     built from the conversation id: <chatwoot>/app/accounts/<account>/conversations/<id>
+#                 (the host is the demo stack's, as in realm-odoo).
+#   status        Chatwoot's four words folded into the vocabulary's three: `snoozed` is pending.
+#   fromCustomer  on a message, from Chatwoot's integer message_type (0 the customer, 1 an agent,
+#                 2 Chatwoot's own activity line), which stays beside it as `messageType`.
+#   sentOn        on a message, the day, from its epoch-seconds `sentAt`.
 
 - name: ChatwootDesk
   visibility: internal
@@ -64,6 +63,7 @@
     replyCount: { type: int, description: "How much back-and-forth there has been (custom attribute reply_count)." }
     caseRef: "The desk's own reference for the case, where it keeps one (custom attribute case_id)."
     labels: "Chatwoot's labels on the conversation."
+    tags: "The same labels, under the business vocabulary's name for them."
     waitingSince: { type: int, description: "Epoch seconds since when the customer has been waiting for a reply; 0 when they are not." }
     deskStatus: "Echo of the desk status this conversation was fetched under."
     accountKeyAsked: "Echo of the account key this conversation was fetched under."

@@ -97,18 +97,19 @@ what Chatwoot provides them for — and this realm reads these:
 properties empty, and everything Chatwoot holds natively — status, priority, requester, labels,
 the thread — regardless.
 
-## Where this realm falls short of the vocabulary, and why
+## Where Chatwoot's shape differs from the vocabulary
 
-A producer's `project` can RENAME a source field. It cannot compute one, and a realm's wasm
-handlers are granted the graph and SQL, not other APIs, so there is nowhere in a realm to
-reshape a record on its way in. Three things the vocabulary specifies are therefore absent
-here — absent, not faked:
+A producer's `project` renames a source field and its `compute:` derives one, so the gaps
+between Chatwoot and the vocabulary's contract are closed here, once, rather than by every
+reader:
 
-| The contract asks for | What this realm gives |
+| The contract asks for | How this realm gives it |
 |---|---|
-| `sourceUrl` | nothing. Build it from `id`: `<chatwoot>/app/accounts/<account>/conversations/<id>` |
-| `status`: open, pending, resolved | Chatwoot's own word, which adds `snoozed` (should fold into pending) |
-| `SupportMessage.fromCustomer` | `messageType`: 0 customer, 1 agent, 2 Chatwoot's own activity line |
+| `sourceUrl` | built from `id`: `<chatwoot>/app/accounts/<account>/conversations/<id>` (the demo stack's host, as realm-odoo's links are) |
+| `status`: open, pending, resolved | Chatwoot's word, with `snoozed` folded into `pending`. The desk door still takes Chatwoot's own words |
+| `SupportMessage.fromCustomer` | `messageType = 0`; `messageType` stays beside it (1 agent, 2 Chatwoot's own activity line) |
+| `SupportMessage.sentOn` | the day of `sentAt` |
+| `tags` | Chatwoot's `labels`, under the vocabulary's name |
 
 ## The account join, and why it cannot be exercised yet
 
