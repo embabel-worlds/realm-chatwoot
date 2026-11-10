@@ -69,7 +69,7 @@
     accountKeyAsked: "Echo of the account key this conversation was fetched under."
   virtualJoins:
     - { anchorLabel: ChatwootDesk, relationship: HAS_CASE, keyField: status,
-        recordKeyField: deskStatus, producer: chatwootConversationsByStatus,
+        recordKeyField: deskStatus, producer: chatwootConversationsByStatus, maxFanoutTotal: 50000,
         description: "Every conversation on the desk in this status ('all' for every status)." }
     # The vocabulary's own edge, from the vocabulary's own anchor: ANY CRM realm whose accounts
     # carry an accountKey reaches this desk's cases through it, and this realm has never heard

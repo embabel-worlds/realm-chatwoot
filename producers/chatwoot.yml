@@ -22,18 +22,19 @@
     # being read: a conversation that is touched between two page reads is seen twice or not
     # at all. Creation order does not move.
     sort_by: created_at_asc
-  # Chatwoot's page size is fixed at 25 and it has no size argument to set.
   # Chatwoot's page size is fixed at 25 and it has no size argument, so maxPages IS the ceiling:
   # 40 pages was 1,000 conversations, and this desk holds 1,521 open. A walk stopped at 1,000 and
   # said so (PARTIAL_RESULT), which is honest but still 521 cases short of every per-account
-  # question asked through this door. 200 pages is 5,000, a real desk's order of magnitude.
+  # question asked through this door. 2,000 pages is 50,000: a mid-market desk's history, read
+  # once per cache window. The book door's maxFanoutTotal matches it, or the engine would keep only
+  # its default 5,000 of what was read.
   #
   # The COUNT is unaffected either way — it reads `all_count` off the envelope and has no ceiling,
   # which is why "how many open cases" answered 1,521 exactly while the walk could only see 1,000.
   # `total`: the list answer carries the desk's count on every page, so after page one the walk
   # knows how many pages remain and fetches them concurrently (me#1539) — 29 pages of open cases
   # cost about one page's latency instead of 29.
-  paging: { style: page, param: page, size: 25, maxPages: 200, total: data.meta.all_count }
+  paging: { style: page, param: page, size: 25, maxPages: 2000, total: data.meta.all_count }
   # The list endpoint takes the status and nothing else: an `id IN [...]` or a priority test in a
   # query is the graph's to apply by construction, and an empty list says so, so the engine does
   # not advise declaring a rule this source cannot honour.
