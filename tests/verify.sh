@@ -63,10 +63,10 @@ echo "== L2: the views reconcile =="
 V=$(view ChatwootCaseCounts '{}')
 check "view: open"     "$OPEN"     "$(echo "$V" | py 'import json,sys; print({r["status"]: r["cases"] for r in json.load(sys.stdin)["data"]}.get("open", 0))')"
 check "view: resolved" "$RESOLVED" "$(echo "$V" | py 'import json,sys; print({r["status"]: r["cases"] for r in json.load(sys.stdin)["data"]}.get("resolved", 0))')"
-V=$(view ChatwootOpenCases '{"limit": 1000}')
+V=$(view ChatwootOpenCases '{"limit": 100000}')
 check "view: open case rows" "$OPEN" "$(echo "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
 check "view: open high-or-urgent" "$HIGH" "$(echo "$V" | py 'import json,sys; print(sum(r["priority"] in ("urgent","high") for r in json.load(sys.stdin)["data"]))')"
-V=$(view ChatwootOpenCasesByAccount '{}')
+V=$(view ChatwootOpenCasesByAccount '{"limit": 100000}')
 check "view: busiest account" "$TOP" "$(echo "$V" | py 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["account"], r["openCases"]))')"
 check "view: open cases summed over accounts" "$OPEN" "$(echo "$V" | py 'import json,sys; print(sum(r["openCases"] for r in json.load(sys.stdin)["data"]))')"
 
