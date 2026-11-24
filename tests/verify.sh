@@ -27,6 +27,8 @@ check() { # name expected actual
   if [ "$2" = "$3" ]; then echo "  ok   $1 = $2"
   else echo "  FAIL $1: expected $2, got $3"; fail=1; fi
 }
+# JSON goes to python through printf, never echo: /bin/sh on macOS has xpg_echo on, so `echo` turns
+# the `\n` escapes in a message body into raw newlines and the JSON stops parsing.
 py() { python3 -c "$1"; }
 cw() { curl -s "$API$1" -H "api_access_token: $CHATWOOT_API_TOKEN"; }
 kg() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
@@ -64,14 +66,14 @@ check "the same cases, asked for as ChatwootConversation" "$ALL" "$N"
 
 echo "== L2: the views reconcile =="
 V=$(view ChatwootCaseCounts '{}')
-check "view: open"     "$OPEN"     "$(echo "$V" | py 'import json,sys; print({r["status"]: r["cases"] for r in json.load(sys.stdin)["data"]}.get("open", 0))')"
-check "view: resolved" "$RESOLVED" "$(echo "$V" | py 'import json,sys; print({r["status"]: r["cases"] for r in json.load(sys.stdin)["data"]}.get("resolved", 0))')"
+check "view: open"     "$OPEN"     "$(printf "%s\n" "$V" | py 'import json,sys; print({r["status"]: r["cases"] for r in json.load(sys.stdin)["data"]}.get("open", 0))')"
+check "view: resolved" "$RESOLVED" "$(printf "%s\n" "$V" | py 'import json,sys; print({r["status"]: r["cases"] for r in json.load(sys.stdin)["data"]}.get("resolved", 0))')"
 V=$(view ChatwootOpenCases '{"limit": 100000}')
-check "view: open case rows" "$OPEN" "$(echo "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
-check "view: open high-or-urgent" "$HIGH" "$(echo "$V" | py 'import json,sys; print(sum(r["priority"] in ("urgent","high") for r in json.load(sys.stdin)["data"]))')"
+check "view: open case rows" "$OPEN" "$(printf "%s\n" "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
+check "view: open high-or-urgent" "$HIGH" "$(printf "%s\n" "$V" | py 'import json,sys; print(sum(r["priority"] in ("urgent","high") for r in json.load(sys.stdin)["data"]))')"
 V=$(view ChatwootOpenCasesByAccount '{"limit": 100000}')
-check "view: busiest account" "$TOP" "$(echo "$V" | py 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["account"], r["openCases"]))')"
-check "view: open cases summed over accounts" "$OPEN" "$(echo "$V" | py 'import json,sys; print(sum(r["openCases"] for r in json.load(sys.stdin)["data"]))')"
+check "view: busiest account" "$TOP" "$(printf "%s\n" "$V" | py 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["account"], r["openCases"]))')"
+check "view: open cases summed over accounts" "$OPEN" "$(printf "%s\n" "$V" | py 'import json,sys; print(sum(r["openCases"] for r in json.load(sys.stdin)["data"]))')"
 
 echo "== L3: one company costs that company, not the desk =="
 # The busiest open company is the hardest single-company case the desk has. Its ground truth comes
@@ -93,24 +95,28 @@ print(allc, opn, ids[-1])")
 set -- $ACCT_TRUTH; ACCT_ALL=$1; ACCT_OPEN=$2; ACCT_CASE=$3
 ACCT_PAGES=$(( (ACCT_ALL + 24) / 25 ))
 echo "  $ACCT: all=$ACCT_ALL open=$ACCT_OPEN (at most $ACCT_PAGES calls for one company)"
-# cost <json> -> "rows-or-n apiCalls deskCalls": a desk call on a one-company question is the defect.
+# cost <json> -> "rows-or-n apiCalls deskCalls fetchedRecords". apiCalls is what THIS run asked the
+# source, so a warm cache reads 0; fetchedRecords counts cache-served records too, so it is the
+# figure that says how much of the desk a question touched whatever the cache holds.
 cost() { py 'import json,sys
 r = json.load(sys.stdin)
 if r.get("reason"): print("REFUSED", r.get("reason"), r.get("error"), file=sys.stderr)
 rows = r.get("rows") or []
 n = rows[0].get("n") if rows and "n" in rows[0] else len(rows)
-print(n, r.get("apiCalls", 0), sum(1 for c in r.get("apiCallLog", []) if c.startswith("chatwootConversationsByStatus")))'; }
+print(n, r.get("apiCalls", 0), sum(1 for c in r.get("apiCallLog", []) if c.startswith("chatwootConversationsByStatus")), r.get("fetchedRecords") or 0)'; }
 set -- $(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' RETURN count(c) AS n" | cost)
 check "one company's cases, by a bare accountKey pin" "$ACCT_ALL" "$1"
 check "  ...read without touching the desk door" "0" "$3"
 [ "$2" -le "$ACCT_PAGES" ] && echo "  ok   ...in $2 call(s)" || { echo "  FAIL ...in $2 calls, more than $ACCT_PAGES"; fail=1; }
+[ "$4" -le "$ACCT_ALL" ] && echo "  ok   ...reading $4 case record(s), none of another company's" \
+  || { echo "  FAIL ...reading $4 case records for a company with $ACCT_ALL"; fail=1; }
 set -- $(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' AND c.status = 'open' RETURN count(c) AS n" | cost)
 check "one company's OPEN cases (status pushed into the filter)" "$ACCT_OPEN" "$1"
 check "  ...read without touching the desk door" "0" "$3"
 V=$(view ChatwootCasesForCompany "{\"account\": \"$ACCT\"}")
-check "view: ChatwootCasesForCompany rows" "$ACCT_ALL" "$(echo "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
+check "view: ChatwootCasesForCompany rows" "$ACCT_ALL" "$(printf "%s\n" "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
 V=$(view ChatwootCasesForCompany "{\"account\": \"$ACCT\", \"status\": \"open\"}")
-check "view: ChatwootCasesForCompany open rows" "$ACCT_OPEN" "$(echo "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
+check "view: ChatwootCasesForCompany open rows" "$ACCT_OPEN" "$(printf "%s\n" "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
 
 echo "== L4: a thread is read whole =="
 # Chatwoot answers a bare messages call with the latest 20 only; the realm asks for the range.
@@ -136,13 +142,17 @@ while True:
 print(len(ids), page)")
 set -- $FOUND; TEXT_CASES=$1; TEXT_PAGES=$2
 echo "  '$TERM_': Chatwoot finds it in $TEXT_CASES conversations ($TEXT_PAGES search page(s))"
-R=$(view ChatwootCasesMentioning "{\"text\": \"$TERM_\", \"limit\": 100000}")
-check "view: ChatwootCasesMentioning cases" "$TEXT_CASES" "$(echo "$R" | py 'import json,sys; print(len({r["caseId"] for r in json.load(sys.stdin)["data"]}))')"
-check "  ...every row's message contains the words" "0" "$(echo "$R" | py "import json,sys; print(sum('$TERM_' not in (r['message'] or '').lower() for r in json.load(sys.stdin)['data']))")"
-set -- $(kg "MATCH (:ChatwootTextSearch {text: '$TERM_'})-[:HAS_CASE]->(c:SupportCase) MATCH (c)-[:HAS_MESSAGE]->(m:SupportMessage) WHERE toLower(m.body) CONTAINS '$TERM_' RETURN count(DISTINCT c) AS n" | cost)
-[ "$2" -le $((TEXT_PAGES + TEXT_CASES)) ] && echo "  ok   ...in $2 call(s), at most $TEXT_PAGES search + $TEXT_CASES threads" \
-  || { echo "  FAIL ...in $2 calls, more than $TEXT_PAGES search + $TEXT_CASES threads"; fail=1; }
+# The cost, read FRESH (`ai: {fresh: true}` on both edges): the view below would be served from what
+# this reads, and a battery run twice inside the cache window would otherwise count 0 calls and pass
+# without measuring anything.
+set -- $(kg "MATCH (:ChatwootTextSearch {text: '$TERM_'})-[:HAS_CASE {ai: {fresh: true}}]->(c:SupportCase) MATCH (c)-[:HAS_MESSAGE {ai: {fresh: true}}]->(m:SupportMessage) WHERE toLower(m.body) CONTAINS '$TERM_' RETURN count(DISTINCT c) AS n" | cost)
+check "cases whose threads say it, by the text door" "$TEXT_CASES" "$1"
+[ "$2" -ge 1 ] && [ "$2" -le $((TEXT_PAGES + TEXT_CASES)) ] && echo "  ok   ...in $2 call(s), at most $TEXT_PAGES search + $TEXT_CASES threads" \
+  || { echo "  FAIL ...in $2 calls, want 1 to $TEXT_PAGES search + $TEXT_CASES threads"; fail=1; }
 check "  ...without touching the desk door" "0" "$3"
+R=$(view ChatwootCasesMentioning "{\"text\": \"$TERM_\", \"limit\": 100000}")
+check "view: ChatwootCasesMentioning cases" "$TEXT_CASES" "$(printf "%s\n" "$R" | py 'import json,sys; print(len({r["caseId"] for r in json.load(sys.stdin)["data"]}))')"
+check "  ...every row's message contains the words" "0" "$(printf "%s\n" "$R" | py "import json,sys; print(sum('$TERM_' not in (r['message'] or '').lower() for r in json.load(sys.stdin)['data']))")"
 
 echo "== the write verbs, against a scratch conversation =="
 # Opt-in, because it writes to the Chatwoot it is pointed at, even though it cleans up after itself.
