@@ -1,6 +1,7 @@
 # Chatwoot's application API — vendored and curated, not generated. Chatwoot publishes a very
-# wide spec; this pins the three operations the realm's producers actually use, each with the
-# facts about it that were found by calling it (what narrows, what silently does not).
+# wide spec; this pins the five operations the realm's producers and methods actually use, each with
+# the facts about it that were found by calling it or reading its source (what narrows, what
+# silently does not).
 #
 # Auth: a user's access token in the `api_access_token` header (Profile settings -> Access
 # Token), held in CHATWOOT_API_TOKEN. The realm reads what that user may read.

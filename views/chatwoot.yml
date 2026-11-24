@@ -1,71 +1,136 @@
 # The answer surface. Every view is written against the VOCABULARY label (SupportCase,
 # SupportMessage) reached through this realm's own door, which is the point of the realm:
-# the query names Chatwoot only where it has to say which desk to open. View names carry the
+# the query names Chatwoot only where it has to say which door to open. View names carry the
 # prefix because view names resolve globally, and a second helpdesk realm would otherwise
 # silently answer for this one.
 #
-# Every row carries `caseId`, Chatwoot's own conversation number, so a surface can link a row
-# back to the conversation in Chatwoot: <chatwoot>/app/accounts/<account>/conversations/<caseId>.
+# WHAT EACH VIEW COSTS is part of choosing it. The desk views read a whole status, 25 cases to a
+# call; ChatwootCasesForCompany asks Chatwoot for one company; ChatwootCasesMentioning asks
+# Chatwoot's own search and reads only the threads it found. A question about one company or about
+# some words is never answered by filtering a desk view.
+#
+# Every row carries `caseId`, Chatwoot's own conversation number, and `url`, which opens it in
+# Chatwoot. Parameters match EXACTLY unless their description says otherwise.
 
 - name: ChatwootOpenCases
   description: >-
-    Every case a customer is still waiting on: open conversations, most urgent first and the
-    longest-running thread first within a priority. THE answer for "what support cases are
-    open", "what are customers waiting on", "open high priority tickets" (via priority) and
-    "what is open for <company>" (via account, the company's domain).
+    Every open case on the desk, most urgent first and the longest thread first within a
+    priority. THE answer for "what support cases are open", "what are customers waiting on" and
+    "open high priority cases" (via priority). Reads the whole open desk; for ONE company use
+    ChatwootCasesForCompany instead.
   outputLabel: OpenCaseRow
   params:
     priority:
       type: string
       default: ""
-      description: "Only this priority: urgent, high, medium or low. Empty = every priority."
-    account:
-      type: string
-      default: ""
-      description: "Only this customer, by company domain (e.g. wayne-ent.com). Empty = every customer."
+      description: "Only this priority, exactly: urgent, high, medium or low. Empty = every priority."
     limit:
       type: int
       default: 100
-      description: "Maximum cases."
+      description: "Maximum cases returned."
   cypher: |
     MATCH (d:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase)
-    // The optional filters test plain VARIABLES, after a WITH, and that is load-bearing. Written
+    // The optional filter tests a plain VARIABLE, after a WITH, and that is load-bearing. Written
     // against the node (`$priority = '' OR c.priority = $priority`), the engine lifts
     // `c.priority = ''` out of the OR as a predicate on the fetched records, and an empty
     // parameter then filters out every row: a view that returns nothing, with no warning.
-    WITH c, c.priority AS casePriority, c.accountKey AS caseAccount
+    WITH c, c.priority AS casePriority
     WHERE ($priority = '' OR casePriority = $priority)
-      AND ($account = '' OR caseAccount = $account)
     RETURN c.id AS caseId, c.accountKey AS account, c.requesterCompany AS company,
            c.subject AS subject, c.priority AS priority, c.kind AS kind,
-           c.requesterName AS requester, c.openedOn AS openedOn, c.replyCount AS replies
+           c.requesterName AS requester, c.openedOn AS openedOn, c.replyCount AS replies,
+           c.sourceUrl AS url
     ORDER BY CASE c.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2
                              WHEN 'low' THEN 3 ELSE 4 END, c.replyCount DESC
     LIMIT $limit
 
+# One company, asked of Chatwoot for that company alone: one filter call for up to 25 cases, where
+# the desk views read every case to find the same rows. This replaced an `account` parameter on
+# ChatwootOpenCases, which answered the same question by reading the whole open desk and filtering.
+- name: ChatwootCasesForCompany
+  description: >-
+    One company's support cases, by its domain, open first and newest first: subject, status,
+    priority, kind, who raised it, the business days and a link. THE answer for "what has <company>
+    raised", "what is open for <company>" and "how many cases does <company> have". Asks Chatwoot
+    for that company alone, so it costs one call, not a desk read.
+  outputLabel: CompanyCaseRow
+  params:
+    account:
+      type: string
+      description: "The company's domain, exactly as the desk records it: lower case, no www, e.g. acme.com."
+    status:
+      type: string
+      default: ""
+      description: "Only this status, exactly: open, pending (Chatwoot's snoozed included) or resolved. Empty = every status."
+  cypher: |
+    MATCH (:ChatwootCompanyCases {accountKey: $account})-[:HAS_CASE]->(c:SupportCase)
+    // The door's pin is the company; the graph's own equality below keeps exactly that company,
+    // because Chatwoot compares the attribute without case and can only return more.
+    WHERE c.accountKey = $account
+    WITH c, c.status AS caseStatus
+    WHERE ($status = '' OR caseStatus = $status)
+    RETURN c.id AS caseId, c.accountKey AS account, c.requesterCompany AS company,
+           c.status AS status, c.subject AS subject, c.priority AS priority, c.kind AS kind,
+           c.requesterName AS requester, c.requesterEmail AS requesterEmail,
+           c.openedOn AS openedOn, c.closedOn AS closedOn, c.replyCount AS replies,
+           c.sourceUrl AS url
+    ORDER BY CASE c.status WHEN 'open' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, c.openedOn DESC, c.id DESC
+
+# Words in a thread, found by Chatwoot's own search: the threads read are only the ones it found,
+# where reading every case's thread to look was one call per case on the desk. The graph then keeps
+# the messages that contain the text, so a row is a message that says it, not merely a case.
+- name: ChatwootCasesMentioning
+  description: >-
+    The messages that contain some text, with the case each is on, newest first. THE answer for
+    "which customers mentioned <words>", "who has written about <topic>" and "find the case where
+    someone said <phrase>". Chatwoot's own search finds the cases, so only their threads are read.
+    Customer and agent messages (private notes included); not Chatwoot's activity lines.
+  outputLabel: CaseMentionRow
+  params:
+    text:
+      type: string
+      description: "The phrase to find. NOT exact: matched as a case-insensitive substring of a message, so 'refund' also finds 'Refunds'."
+    limit:
+      type: int
+      default: 100
+      description: "Maximum messages returned."
+  cypher: |
+    MATCH (:ChatwootTextSearch {text: $text})-[:HAS_CASE]->(c:SupportCase)
+    MATCH (c)-[:HAS_MESSAGE]->(m:ChatwootMessage)
+    // Exactly what Chatwoot searched: customer (0) and agent (1) messages, the text anywhere, case
+    // ignored. The search found the cases; this finds the messages in them that say it.
+    WHERE m.messageType IN [0, 1] AND toLower(m.body) CONTAINS toLower($text)
+    RETURN c.id AS caseId, c.accountKey AS account, c.subject AS subject, c.status AS status,
+           m.id AS messageId, m.fromCustomer AS fromCustomer, m.internal AS internal,
+           m.sentOn AS sentOn, m.body AS message, c.sourceUrl AS url
+    ORDER BY m.sentAt DESC, m.id DESC
+    LIMIT $limit
+
 - name: ChatwootOpenCasesByAccount
   description: >-
-    Open cases counted per customer, busiest first, with how many of them are high priority
-    or worse. THE answer for "which customers have the most open support cases" and "who is
-    struggling". A customer absent from this list has nothing open — that is an answer.
+    Open cases counted per company, busiest first, with how many are urgent or high priority and
+    the replies across them. THE answer for "which customers have the most open support cases"
+    and "who is struggling". A company absent from this list has nothing open. Reads the whole
+    open desk.
   outputLabel: AccountCaseLoadRow
   params:
     limit:
       type: int
       default: 50
-      description: "Maximum customers."
+      description: "Maximum companies returned."
   cypher: |
     MATCH (d:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase)
     RETURN c.accountKey AS account, c.requesterCompany AS company, count(c) AS openCases,
-           sum(CASE WHEN c.priority IN ['urgent', 'high'] THEN 1 ELSE 0 END) AS highPriority,
+           sum(CASE WHEN c.priority IN ['urgent', 'high'] THEN 1 ELSE 0 END) AS urgentOrHighCases,
            sum(c.replyCount) AS replies
-    ORDER BY openCases DESC, highPriority DESC, account
+    ORDER BY openCases DESC, urgentOrHighCases DESC, account
     LIMIT $limit
 
 - name: ChatwootCaseCounts
   description: >-
-    How many cases the desk holds in each status. THE answer for "how many support cases are
-    open" and "how many have we resolved".
+    How many cases the desk holds in each status: open, pending (Chatwoot's snoozed included) and
+    resolved. THE answer for "how many support cases are open" and "how many have we resolved".
+    Reads every case on the desk.
   outputLabel: CaseCountRow
   cypher: |
     MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase)
@@ -74,13 +139,13 @@
 
 - name: ChatwootCompanies
   description: >-
-    Every company that has ever raised a case, with how many and how many are still open. THE
-    answer for "which companies does support deal with". Reading it also keys each of them to
-    the business vocabulary's CustomerAccount, which is how an account-level surface comes to
-    know about a company only support has heard of.
+    Every company that has ever raised a case, with how many cases and how many are still open or
+    pending. THE answer for "which companies does support deal with". Reading it also keys each of
+    them to the business vocabulary's CustomerAccount, which is how an account-level surface comes
+    to know about a company only support has heard of. Reads every case on the desk.
   outputLabel: SupportedCompanyRow
   cypher: |
     MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase)
     RETURN c.accountKey AS account, c.requesterCompany AS company, count(c) AS cases,
-           sum(CASE WHEN c.status IN ['open', 'pending'] THEN 1 ELSE 0 END) AS openCases
-    ORDER BY openCases DESC, cases DESC
+           sum(CASE WHEN c.status IN ['open', 'pending'] THEN 1 ELSE 0 END) AS openOrPendingCases
+    ORDER BY openOrPendingCases DESC, cases DESC

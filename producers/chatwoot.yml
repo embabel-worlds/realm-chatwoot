@@ -1,13 +1,30 @@
-# Three producers, all through Chatwoot's own application API — never its database.
+# Five producers, all through Chatwoot's own application API — never its database.
 #
-# The two conversation producers carry the SAME `project`, written out twice: the host reads
-# this file without resolving YAML anchors, so there is no way to say it once. Keep them
-# identical. The vocabulary's names are on the left, Chatwoot's on the right. `project` renames;
-# `compute:` derives what the contract asks for in a shape Chatwoot does not keep (a message's
-# fromCustomer and sentOn). types/chatwoot.yml lists what this realm still cannot give.
+# WHICH DOOR ANSWERS WHAT, and what it costs. The desk door reads a whole status (every case on
+# the desk in one page walk); the account door asks Chatwoot for ONE company's cases; the text door
+# asks Chatwoot which conversations contain some words; the thread door reads one conversation's
+# messages. A question about one company costs that company's cases, not the desk's:
+#
+#   MATCH (c:SupportCase) WHERE c.accountKey = 'acme.com'          one filter call (the account door)
+#   MATCH (:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c)           every case, 25 to a page
+#
+# The engine takes the account door for the first form by itself, because the join declares
+# `materializedKeyField: accountKey` (types/chatwoot.yml).
+#
+# The three conversation producers carry the SAME `project` and `compute`, written out three times:
+# the host reads this file without resolving YAML anchors, so there is no way to say it once. Keep
+# them identical. The vocabulary's names are on the left, Chatwoot's on the right.
+#
+# PAGE SIZE. Every Chatwoot conversation listing is 25 to a page, fixed (CONVERSATION_RESULTS_PER_PAGE
+# on the server, Kaminari's default on the filter), and takes no size argument, so `size: 25` is the
+# source's maximum and `maxPages` is the ceiling.
+#
+# RATE LIMIT. Chatwoot throttles per client IP (Rack::Attack `req/ip`, 3,000 a minute by default,
+# RACK_ATTACK_LIMIT on the server). A sweep of a large desk is tens of pages; a thread fan-out is one
+# call per conversation. Both are why the narrow doors exist and why the thread is cached long.
 
-# The desk by status — the scan door. The anchor key IS Chatwoot's own `status` argument, so
-# the door needs no invented parameter and the narrowing happens at the source.
+# The desk by status — the scan door. The anchor key IS Chatwoot's own `status` argument, so the door
+# needs no invented parameter and the narrowing happens at the source.
 - name: chatwootConversationsByStatus
   kind: api
   operation: chatwootConversationsList
@@ -18,34 +35,24 @@
   echoKeyAs: deskStatus
   args:
     assignee_type: all
-    # Load-bearing. Chatwoot's default order is by last activity, which MOVES while pages are
-    # being read: a conversation that is touched between two page reads is seen twice or not
-    # at all. Creation order does not move.
+    # Load-bearing. Chatwoot's default order is by last activity, which MOVES while pages are being
+    # read: a conversation touched between two page reads is seen twice or not at all. Creation
+    # order does not move.
     sort_by: created_at_asc
-  # Chatwoot's page size is fixed at 25 and it has no size argument, so maxPages IS the ceiling:
-  # 40 pages was 1,000 conversations, and this desk holds 1,521 open. A walk stopped at 1,000 and
-  # said so (PARTIAL_RESULT), which is honest but still 521 cases short of every per-account
-  # question asked through this door. 2,000 pages is 50,000: a mid-market desk's history, read
-  # once per cache window. The book door's maxFanoutTotal matches it, or the engine would keep only
-  # its default 5,000 of what was read.
-  #
-  # The COUNT is unaffected either way — it reads `all_count` off the envelope and has no ceiling,
-  # which is why "how many open cases" answered 1,521 exactly while the walk could only see 1,000.
-  # `total`: the list answer carries the desk's count on every page, so after page one the walk
-  # knows how many pages remain and fetches them concurrently (me#1539) — 29 pages of open cases
-  # cost about one page's latency instead of 29.
+  # Creation order, oldest first, so `ORDER BY c.createdAt LIMIT n` can stop after the pages it needs.
+  orderedBy: [{ property: createdAt }]
+  # 2,000 pages is 50,000 conversations: a mid-market desk's history, read once per cache window. The
+  # door's maxFanoutTotal matches it, or the engine would keep only its default 5,000 of what was read.
+  # `total`: the list answer carries the desk's count on every page, so after page one the walk knows
+  # how many pages remain and fetches them concurrently (me#1539).
   paging: { style: page, param: page, size: 25, maxPages: 2000, total: data.meta.all_count }
-  # The list endpoint takes the status and nothing else: an `id IN [...]` or a priority test in a
-  # query is the graph's to apply by construction, and an empty list says so, so the engine does
-  # not advise declaring a rule this source cannot honour.
+  # The list endpoint takes the status and nothing else that a case carries: a company, a priority, a
+  # date or an id in a query is the graph's to apply on this door, and an empty list says so. A query
+  # about ONE company does not come through here — see the account door below.
   pushdown: []
-  # "How many are open" is in the FIRST response — `all_count` beside the page — so it costs
-  # one call rather than walking forty. It matters more here than anywhere else in the realm:
-  # 25 x 40 is a hard ceiling of 1,000 conversations, above which the walk returns a
-  # PARTIAL_RESULT and its number is a floor. The count has no ceiling and is exact.
-  #
-  # `records: "$"` reads the ENVELOPE. The producer's own path selects a conversation, and a
-  # conversation carries no total — without this the measure resolves to null (me#1402).
+  # "How many are open" is in the FIRST response — `all_count` beside the page — so it costs one call
+  # rather than a walk, and it has no ceiling. `records: "$"` reads the ENVELOPE: the producer's own
+  # path selects a conversation, and a conversation carries no total (me#1402).
   aggregates:
     - measure: count
       valueField: data.meta.all_count
@@ -68,19 +75,29 @@
     labels: labels
     tags: labels
     waitingSince: waiting_since
-  # The vocabulary's sourceUrl: opens the conversation in Chatwoot. The host is the demo stack's,
-  # as realm-odoo's links are; a desk elsewhere changes it here.
+    createdAt: created_at
+    lastActivityAt: last_activity_at
   compute:
+    # The vocabulary's sourceUrl: opens the conversation in Chatwoot. The host is the demo stack's, as
+    # realm-odoo's links are; a desk elsewhere changes it here.
     sourceUrl: "'http://localhost:3100/app/accounts/1/conversations/' + toString(r.id)"
     # The vocabulary's three statuses: Chatwoot's `snoozed` is a case waiting on a date, which the
     # vocabulary folds into pending. The desk door still takes Chatwoot's own words, so
     # `(:ChatwootDesk {status:'snoozed'})` asks for exactly the snoozed ones.
     status: "CASE r.status WHEN 'snoozed' THEN 'pending' ELSE r.status END"
+  # A desk changes by the minute. A minute old is the most a "what is open" answer should be.
   cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }
 
-# One account's cases, by the company domain the desk records on each conversation. Chatwoot's
-# filter takes a `values` array but matches only its FIRST element (verified: two domains in,
-# one domain's conversations out), so this asks one account per call and says so.
+# One company's cases, by the company domain the desk records on each conversation (custom attribute
+# account_key). Chatwoot's filter takes a `values` array but matches only its FIRST element for a
+# custom attribute (verified: two domains in, one domain's conversations out), so this asks one
+# company per call.
+#
+# Chatwoot compares the attribute case-insensitively (LOWER(custom_attributes ->> 'account_key')),
+# which can only return MORE than the graph's exact `accountKey = …` keeps, never less, so the graph's
+# own comparison stays the answer. It needs the attribute DEFINED on the desk (Settings → Custom
+# Attributes, key account_key, type text): Chatwoot silently drops a clause on an undefined
+# attribute and answers with every conversation. seed/load_book.py defines it; see the README.
 - name: chatwootConversationsByAccount
   kind: api
   operation: chatwootConversationsFilter
@@ -94,30 +111,25 @@
         filter_operator: equal_to
         values: []
         custom_attribute_type: conversation_attribute
-  paging: { style: page, param: page, size: 25, maxPages: 20, total: meta.all_count }
-  # A `WHERE c.status IN [...]` on the query reaches the DESK instead of being applied after the
-  # fetch. Structured rather than a text qualifier because this filter is JSON: each payload clause
-  # is an object, and `query_operator` on the PRECEDING one is how the desk spells AND.
+  # The filter answers in last-activity order, newest first, and takes no sort argument.
+  orderedBy: [{ property: lastActivityAt, descending: true }]
+  # One company rarely has more than a page; 40 pages is a thousand cases for one company.
+  paging: { style: page, param: page, size: 25, maxPages: 40, total: meta.all_count }
+  # Each clause is a JSON object appended to the payload, and `query_operator` on the PRECEDING clause
+  # is how the desk spells AND. Verified against a running desk, because the shape is unforgiving:
+  # appending without the operator is an HTTP 500, and one on the LAST clause earns "Query operator
+  # must be either AND or OR" — so it is written at append time (`linkPrevious`).
   #
-  # Verified against a running desk, because the shape is unforgiving: appending without the
-  # operator is an HTTP 500, and putting one on the LAST clause earns "Query operator must be
-  # either AND or OR" — so it cannot be declared statically here, only written at append time.
-  #
-  # Worth declaring for more than the page it saves: what the source absorbs is what lets the
-  # engine push a LIMIT and ask for a COUNT instead of the records. An undeclared filter costs a
-  # call per account.
+  # Worth declaring for more than the page it saves: what the source absorbs is what lets the engine
+  # push a LIMIT and ask for a COUNT instead of the records.
   pushdown:
-    - property: status
-      op: IN
-      argPath: payload.-
-      clause:
-        attribute_key: status
-        filter_operator: equal_to
-        values: "{values}"
-        custom_attribute_type: null
-      linkPrevious: { query_operator: AND }
+    # Only `open` and `resolved` are pushed. The graph's `pending` is Chatwoot's pending AND snoozed
+    # (see `compute`), so asking Chatwoot for 'pending' would lose the snoozed ones. A pending
+    # question reads the company's cases and filters in the graph: one company's cases, still small.
+    # No IN rule for the same reason: a set naming pending cannot be sent as written.
     - property: status
       op: EQUALS
+      valuePattern: "^(open|resolved)$"
       argPath: payload.-
       clause:
         attribute_key: status
@@ -125,6 +137,22 @@
         values: ["{value}"]
         custom_attribute_type: null
       linkPrevious: { query_operator: AND }
+    # Chatwoot stores priority as the same four words the graph holds, so equality is exact.
+    - property: priority
+      op: EQUALS
+      valuePattern: "^(urgent|high|medium|low)$"
+      argPath: payload.-
+      clause:
+        attribute_key: priority
+        filter_operator: equal_to
+        values: ["{value}"]
+        custom_attribute_type: null
+      linkPrevious: { query_operator: AND }
+  # "How many open cases does this company have" is `meta.all_count` on the first page: one call.
+  aggregates:
+    - measure: count
+      valueField: meta.all_count
+      records: "$"
   project:
     id: id
     accountKey: custom_attributes.account_key
@@ -143,36 +171,95 @@
     labels: labels
     tags: labels
     waitingSince: waiting_since
-  # Most accounts have no open case, and a clean answer is worth remembering as much as a
-  # full one: without a negative TTL every quiet account is asked again on every query.
-  # The vocabulary's sourceUrl: opens the conversation in Chatwoot. The host is the demo stack's,
-  # as realm-odoo's links are; a desk elsewhere changes it here.
+    createdAt: created_at
+    lastActivityAt: last_activity_at
   compute:
     sourceUrl: "'http://localhost:3100/app/accounts/1/conversations/' + toString(r.id)"
-    # The vocabulary's three statuses: Chatwoot's `snoozed` is a case waiting on a date, which the
-    # vocabulary folds into pending. The desk door still takes Chatwoot's own words, so
-    # `(:ChatwootDesk {status:'snoozed'})` asks for exactly the snoozed ones.
     status: "CASE r.status WHEN 'snoozed' THEN 'pending' ELSE r.status END"
+  # Most companies have nothing open, and a clean answer is worth remembering as much as a full one:
+  # without a negative TTL every quiet company is asked again on every query.
   cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }
 
-# A conversation's thread. The conversation id is part of the path, so this is one call per
-# conversation by construction.
+# The conversations whose messages contain some text, found by Chatwoot itself (the list endpoint's
+# `q`): one search instead of reading every conversation's thread to look. Chatwoot matches the
+# words case-insensitively, anywhere in a customer's or an agent's message (private notes included),
+# over the whole history; its own activity lines are not searched.
+#
+# Read in the v4.17.1 source rather than taken from the docs, and two of its answers differ from the
+# plain list: with `q` Chatwoot IGNORES `status`, and its `all_count` is computed after the page is
+# cut, so it is not the total. So no status is sent, no `total` is declared (the walk reads pages
+# until one comes back short), and no count is read off the envelope.
+#
+# Chatwoot's other search, /search/messages, is not used: it looks back only three months, and on a
+# desk with full-text search switched on it matches whole words rather than text, so it would answer
+# a "contains" question with fewer conversations than contain the words.
+- name: chatwootConversationsByText
+  kind: api
+  operation: chatwootConversationsList
+  records: "$.data.payload[*]"
+  keyArg: q
+  batchSafe: false
+  echoKeyAs: textAsked
+  args:
+    assignee_type: all
+    sort_by: created_at_asc
+  orderedBy: [{ property: createdAt }]
+  paging: { style: page, param: page, size: 25, maxPages: 200 }
+  # The search takes the text and nothing else a case carries.
+  pushdown: []
+  project:
+    id: id
+    accountKey: custom_attributes.account_key
+    subject: custom_attributes.subject
+    status: status
+    priority: priority
+    kind: custom_attributes.kind
+    requesterEmail: meta.sender.email
+    requesterName: meta.sender.name
+    requesterCompany: meta.sender.additional_attributes.company_name
+    openedOn: custom_attributes.opened_on
+    updatedOn: custom_attributes.updated_on
+    closedOn: custom_attributes.closed_on
+    replyCount: custom_attributes.reply_count
+    caseRef: custom_attributes.case_id
+    labels: labels
+    tags: labels
+    waitingSince: waiting_since
+    createdAt: created_at
+    lastActivityAt: last_activity_at
+  compute:
+    sourceUrl: "'http://localhost:3100/app/accounts/1/conversations/' + toString(r.id)"
+    status: "CASE r.status WHEN 'snoozed' THEN 'pending' ELSE r.status END"
+  # Words that match nothing are asked about again too, so the clean answer is remembered as long.
+  cache: { kind: ttl, seconds: 120, negativeTtlSeconds: 120 }
+
+# A conversation's thread. The conversation id is in the path, so this is one call per conversation
+# by construction — which is why it is keyed so it can be cached for a day.
+#
+# THE KEY IS THE CONVERSATION AND ITS LAST ACTIVITY (the join's producerKeyFields: [id,
+# lastActivityAt]). Chatwoot moves a conversation's last_activity_at to the new message's time on
+# EVERY message it records — customer, agent, private note or its own activity line — so a thread
+# with a new message is a new key and is read again, and a thread that has not moved is served from
+# the cache however long ago it was read. A resolved conversation's thread is therefore read once.
+# What the key cannot see is an existing message edited or deleted in place; the day's TTL bounds that.
 - name: chatwootMessagesByConversation
   kind: api
-  keyType: int
   operation: chatwootConversationMessages
   records: "$.payload[*]"
-  # STRING mode, not list mode: `keyArg` would hand the path a JSON list, and Chatwoot was
-  # asked for conversation "[182]" (a 404, reported honestly as a missing key). The template
-  # renders the one key of each call into the path as itself.
-  keyTemplate: "{key}"
-  args:
-    conversation_id: "{keys}"
+  # The composite arrives as one key per conversation; the second part names no argument the
+  # operation declares, so it is not sent — it is in the key only to be in the cache key.
+  keyArgs: [conversation_id, lastActivityAt]
   batchSafe: false
   echoKeyAs: conversationKey
-  # The thread comes back whole or not at all — Chatwoot's messages endpoint has no filter — so a
-  # `messageType = 0` in a query is always applied graph-side. Declared empty so the engine knows
-  # that is the source's shape and not a missing rule.
+  # Load-bearing. With neither argument Chatwoot answers with the LATEST 20 messages only, so every
+  # longer thread was silently cut to its last twenty. after=0 with a `before` above the id range is
+  # the whole thread, oldest first, up to 1,000 messages in one call (MessageFinder#messages_between).
+  args:
+    after: 0
+    before: 2147483648
+  # The thread comes back whole or not at all — the endpoint has no filter — so a `messageType = 0`
+  # in a query is always applied graph-side. Declared empty so the engine knows that is the source's
+  # shape and not a missing rule.
   pushdown: []
   # A message's body is what a customer wrote, or what an agent wrote to them. Text from outside the
   # business can carry instructions meant for whoever reads it, so a routine that reads it is marked,
@@ -185,8 +272,8 @@
     internal: private
     sentAt: created_at
   # The vocabulary's SupportMessage: fromCustomer is Chatwoot's message_type 0 (1 is an agent, 2
-  # Chatwoot's own activity line), and sentOn the day, from its epoch seconds.
+  # Chatwoot's own activity line, 3 a template), and sentOn the day, from its epoch seconds.
   compute:
     fromCustomer: "r.messageType = 0"
     sentOn: "toString(date(datetime({epochSeconds: r.sentAt})))"
-  cache: { kind: ttl, seconds: 60, negativeTtlSeconds: 60 }
+  cache: { kind: ttl, seconds: 86400, negativeTtlSeconds: 86400 }

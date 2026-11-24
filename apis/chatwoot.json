@@ -29,7 +29,7 @@
   "/conversations": {
    "get": {
     "operationId": "chatwootConversationsList",
-    "summary": "List conversations, one page of 25",
+    "summary": "List conversations, one page of 25 (the source's fixed page size)",
     "parameters": [
      {
       "name": "status",
@@ -67,6 +67,14 @@
        "type": "string"
       },
       "description": "`created_at_asc` gives a STABLE order. The default orders by last activity, which moves while pages are being read."
+     },
+     {
+      "name": "q",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "Message text. Keeps the conversations with at least one customer (incoming) or agent (outgoing, private notes included) message whose content contains it, case-insensitively (SQL ILIKE '%q%'), over the whole history. Chatwoot's own activity lines are not searched. When `q` is given Chatwoot IGNORES `status` and its meta.all_count is computed after the page is applied, so it is at most the page and not the total: page until a short page and never read that count (read in the v4.17.1 source, ConversationFinder#filter_by_query and #set_count_for_all_conversations; not yet observed live)."
      },
      {
       "name": "page",
@@ -168,11 +176,27 @@
       "schema": {
        "type": "integer"
       }
+     },
+     {
+      "name": "after",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Only messages with an id at or above this one. Given with `before`, the answer is the range, oldest first, up to 1,000 messages."
+     },
+     {
+      "name": "before",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Only messages with an id below this one. A value above 2147483647 sets no upper bound, so `after=0&before=2147483648` is the whole thread up to 1,000 messages. With NEITHER argument Chatwoot returns only the LATEST 20 (MessageFinder#messages_latest), which is a silent truncation of any longer thread."
      }
     ],
     "responses": {
      "200": {
-      "description": "payload is the list, oldest first",
+      "description": "payload is the list, oldest first. Without after/before it is only the latest 20 messages.",
       "content": {
        "application/json": {
         "schema": {
