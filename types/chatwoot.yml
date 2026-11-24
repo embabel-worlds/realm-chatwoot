@@ -26,6 +26,8 @@
 # lastActivityAt and waitingSince are Chatwoot's own clock, in epoch seconds: when the row was made,
 # when anything last happened in the thread, and since when the customer has been waiting. A desk
 # loaded from another system has every createdAt on the day it was loaded; its openedOn is the truth.
+# Each date property declares its shape as `format:`, which a model writing a query sees under the
+# type, so the property descriptions say which clock and leave the shape to the field.
 
 - name: ChatwootDesk
   visibility: internal
@@ -100,16 +102,16 @@
     requesterEmail: "The contact's email address."
     requesterName: "The contact's name."
     requesterCompany: { description: "The company name the contact gave, as they wrote it. Not a key; accountKey is.", metadata: { canonical: name } }
-    openedOn: "The business day the customer raised it, YYYY-MM-DD (custom attribute opened_on)."
-    updatedOn: "The business day anything last happened on it, YYYY-MM-DD (custom attribute updated_on)."
-    closedOn: "The business day it was resolved, YYYY-MM-DD (custom attribute closed_on); null while not resolved."
+    openedOn: { format: yyyy-MM-dd, description: "The business day the customer raised it (custom attribute opened_on)." }
+    updatedOn: { format: yyyy-MM-dd, description: "The business day anything last happened on it (custom attribute updated_on)." }
+    closedOn: { format: yyyy-MM-dd, description: "The business day it was resolved (custom attribute closed_on); null while not resolved." }
     replyCount: { type: int, description: "How many replies the thread has had, as the desk counts them (custom attribute reply_count)." }
     caseRef: "The desk's own reference for the case, where it keeps one (custom attribute case_id)."
     labels: { type: any, description: "Chatwoot's labels on the conversation, a list of words." }
     tags: { type: any, description: "The same labels, under the business vocabulary's name for them." }
-    waitingSince: { type: int, description: "Epoch seconds since when the customer has been waiting for a reply; 0 when they are not." }
-    createdAt: { type: int, description: "Epoch seconds when Chatwoot created the conversation row. Not the business day; openedOn is." }
-    lastActivityAt: { type: int, description: "Epoch seconds of the latest message of any kind in the thread. Moves on every new message." }
+    waitingSince: { type: int, format: "Unix epoch seconds", description: "Since when the customer has been waiting for a reply; 0 when they are not." }
+    createdAt: { type: int, format: "Unix epoch seconds", description: "When Chatwoot created the conversation row. Not the business day; openedOn is." }
+    lastActivityAt: { type: int, format: "Unix epoch seconds", description: "The latest message of any kind in the thread. Moves on every new message." }
     deskStatus: "Echo of the ChatwootDesk status this case was fetched under (Chatwoot's word, e.g. all or snoozed)."
     accountKeyAsked: "Echo of the company domain this case was fetched under."
     textAsked: "Echo of the text search this case was found by."
@@ -177,8 +179,8 @@
     messageType: { type: int, description: "Who it is from: 0 customer, 1 agent, 2 Chatwoot activity line, 3 template." }
     fromCustomer: { type: boolean, description: "True when the customer wrote it (messageType 0)." }
     internal: { type: boolean, description: "True for a private note between staff that the customer never saw." }
-    sentAt: { type: int, description: "Epoch seconds when it was sent." }
-    sentOn: "The day it was sent, YYYY-MM-DD, UTC."
+    sentAt: { type: int, format: "Unix epoch seconds", description: "When it was sent." }
+    sentOn: { format: yyyy-MM-dd, description: "The UTC day it was sent." }
     conversationKey: "Echo of the conversation this message was fetched for: its id and last activity, joined by U+001F."
   virtualJoins:
     # Keyed on the conversation AND its last activity, so the thread is cached until something is
