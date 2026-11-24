@@ -5,7 +5,7 @@ description: >-
   business vocabulary (realm-business-vocabulary, installed first), so a question asked about
   support cases is answered here without naming Chatwoot. Every type is virtual: nothing is
   mirrored, and a change made in Chatwoot's own UI is what the next query sees.
-version: 0.2.0
+version: 0.2.1
 # Works and reconciles against Chatwoot, but the realms that make it useful are still being
 # built, and part of the vocabulary's contract cannot be met yet (see the README).
 maturity: experimental

@@ -14,8 +14,8 @@
 
 - name: ChatwootOpenCases
   description: >-
-    Every open case on the desk, most urgent first and the longest thread first within a
-    priority. THE answer for "what support cases are open", "what are customers waiting on" and
+    Every open case on the desk, most urgent first. Within a priority the longest thread comes
+    first. THE answer for "what support cases are open", "what are customers waiting on" and
     "open high priority cases" (via priority). Reads the whole open desk; for ONE company use
     ChatwootCasesForCompany instead.
   outputLabel: OpenCaseRow
@@ -49,14 +49,15 @@
 # ChatwootOpenCases, which answered the same question by reading the whole open desk and filtering.
 - name: ChatwootCasesForCompany
   description: >-
-    One company's support cases, by its domain, open first and newest first: subject, status,
-    priority, kind, who raised it, the business days and a link. THE answer for "what has <company>
+    One company's support cases, found by its domain. Open first and newest first, with subject,
+    status, priority, kind, who raised it, the business days and a link. THE answer for "what has <company>
     raised", "what is open for <company>" and "how many cases does <company> have". Asks Chatwoot
     for that company alone, so it costs one call, not a desk read.
   outputLabel: CompanyCaseRow
   params:
     account:
       type: string
+      required: true
       description: "The company's domain, exactly as the desk records it: lower case, no www, e.g. acme.com."
     status:
       type: string
@@ -89,6 +90,7 @@
   params:
     text:
       type: string
+      required: true
       description: "The phrase to find. NOT exact: matched as a case-insensitive substring of a message, so 'refund' also finds 'Refunds'."
     limit:
       type: int
@@ -108,7 +110,7 @@
 
 - name: ChatwootOpenCasesByAccount
   description: >-
-    Open cases counted per company, busiest first, with how many are urgent or high priority and
+    Open cases counted per company, busiest first. Also how many are urgent or high priority, and
     the replies across them. THE answer for "which customers have the most open support cases"
     and "who is struggling". A company absent from this list has nothing open. Reads the whole
     open desk.
@@ -128,9 +130,10 @@
 
 - name: ChatwootCaseCounts
   description: >-
-    How many cases the desk holds in each status: open, pending (Chatwoot's snoozed included) and
-    resolved. THE answer for "how many support cases are open" and "how many have we resolved".
-    Reads every case on the desk.
+    How many cases the desk holds in each status. One row per status that has a case: open,
+    pending (Chatwoot's snoozed included) and resolved; a status with no case is not listed. THE answer
+    for "how many support cases are open" and "how many have we resolved". Reads every case on the
+    desk.
   outputLabel: CaseCountRow
   cypher: |
     MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase)
@@ -139,8 +142,8 @@
 
 - name: ChatwootCompanies
   description: >-
-    Every company that has ever raised a case, with how many cases and how many are still open or
-    pending. THE answer for "which companies does support deal with". Reading it also keys each of
+    Every company that has ever raised a case, with its case counts. Also how many are still open
+    or pending. THE answer for "which companies does support deal with". Reading it also keys each of
     them to the business vocabulary's CustomerAccount, which is how an account-level surface comes
     to know about a company only support has heard of. Reads every case on the desk.
   outputLabel: SupportedCompanyRow

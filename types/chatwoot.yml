@@ -39,6 +39,8 @@
     status:
       metadata: { identity: "true", default: "all" }
       description: "Chatwoot's own status word, exactly: all, open, pending, resolved or snoozed."
+      # Complete: these are the four states Chatwoot has, and 'all', which the list endpoint takes.
+      values: [all, open, pending, resolved, snoozed]
 
 - name: ChatwootCompanyCases
   visibility: internal
@@ -85,9 +87,16 @@
       hub: CustomerAccount
       description: "The requester's company domain, lower case, e.g. acme.com (custom attribute account_key). Pinning it asks Chatwoot for that company alone."
     subject: "One line saying what the case is about (custom attribute subject)."
-    status: "open, pending or resolved. Chatwoot's snoozed (waiting on a date) reads as pending here; pin ChatwootDesk {status:'snoozed'} to tell them apart."
-    priority: "urgent, high, medium or low; null when none was set."
-    kind: "bug, feature-request, question, documentation or enhancement (custom attribute kind)."
+    # Complete: `compute` folds Chatwoot's fourth state, snoozed, into pending, so no case holds it.
+    status:
+      description: "open, pending or resolved. Chatwoot's snoozed (waiting on a date) reads as pending here; pin ChatwootDesk {status:'snoozed'} to tell them apart."
+      values: [open, pending, resolved]
+    # Complete for a case that has one: Chatwoot's priority enum is these four; null when none was set.
+    priority:
+      description: "urgent, high, medium or low, lower case; null when none was set."
+      values: [urgent, high, medium, low]
+    # No `values:` on purpose: the words are whatever the desk records, so a list would make a real one unaskable.
+    kind: "The desk's own lower-case word for the sort of case (custom attribute kind), e.g. bug, feature-request, question or enhancement; not exhaustive."
     requesterEmail: "The contact's email address."
     requesterName: "The contact's name."
     requesterCompany: { description: "The company name the contact gave, as they wrote it. Not a key; accountKey is.", metadata: { canonical: name } }
@@ -132,15 +141,36 @@
         recordKeyField: accountKeyAsked, producer: chatwootConversationsByAccount, ridesHub: true,
         description: "A customer account's support cases, matched on the company domain." }
 
+  # Three paths a model should prefer, each over the cheapest door that answers it. A company
+  # question pins accountKey on the case (one call, not a desk read); words in threads start from
+  # the text door (only the threads Chatwoot found are read); a desk-wide question names its status
+  # on the door, which is what sends the status to Chatwoot.
+  examples:
+    - q: "how many open support cases does acme.com have"
+      cypher: |
+        MATCH (c:SupportCase) WHERE c.accountKey = 'acme.com' AND c.status = 'open'
+        RETURN count(c) AS openCases
+    - q: "which customers have written to support about refunds"
+      cypher: |
+        MATCH (:ChatwootTextSearch {text: 'refund'})-[:HAS_CASE]->(c:SupportCase)
+        MATCH (c)-[:HAS_MESSAGE]->(m:ChatwootMessage)
+        WHERE m.messageType = 0 AND toLower(m.body) CONTAINS 'refund'
+        RETURN DISTINCT c.accountKey AS account, c.id AS caseId, c.subject AS subject
+    - q: "what urgent support cases are open"
+      cypher: |
+        MATCH (:ChatwootDesk {status: 'open'})-[:HAS_CASE]->(c:SupportCase)
+        WHERE c.priority = 'urgent'
+        RETURN c.id AS caseId, c.accountKey AS account, c.subject AS subject, c.openedOn AS openedOn
+
 - name: ChatwootMessage
   visibility: internal
   userAnchor: false
   parents: [SupportMessage]
   description: >-
-    One message in a Chatwoot conversation's thread, and a SupportMessage. Read messageType before
-    the words: 0 the customer, 1 an agent, 2 Chatwoot's own activity line ("priority set to high"),
-    3 a template. internal marks a private note the customer never saw. sentAt is epoch seconds,
-    sentOn its day. The whole thread is read, oldest first, up to 1,000 messages.
+    One message in a Chatwoot conversation's thread, a SupportMessage, identified by id (Chatwoot's
+    message id). Read messageType before the words: 0 the customer, 1 an agent, 2 Chatwoot's own
+    activity line, 3 a template. internal marks a private note. sentAt is epoch seconds, sentOn its
+    day. A thread is read whole, oldest first, up to 1,000 messages.
   properties:
     id: { type: int, identity: true, description: "Chatwoot's message id; ids grow within a desk, so they order a thread." }
     body: "The message text as written, markdown included; null for an attachment with no words."
