@@ -5,9 +5,12 @@
 #   CHATWOOT=http://127.0.0.1:3100 CHATWOOT_ACCOUNT_ID=1 CHATWOOT_API_TOKEN=... \
 #   APPLIANCE=http://127.0.0.1:11043 AUTH=user:pass sh tests/verify.sh
 #
-# Three layers, each against the one before: Chatwoot itself, then a traversal through the
-# business vocabulary's labels, then the saved views. A figure that reconciles at the view and
-# not at the traversal means the view is compensating for something, and that is a finding.
+# Layers, each against the one before: Chatwoot itself, then a traversal through the business
+# vocabulary's labels, then the saved views. A figure that reconciles at the view and not at the
+# traversal means the view is compensating for something, and that is a finding. Then COST, which
+# is a figure too: one company's cases must be read without the desk door and in no more calls than
+# that company has pages (L3), a thread must come back whole (L4), and words in threads must be found
+# by Chatwoot's search plus one read per case it found, never one read per case on the desk (L5).
 set -e
 # Either AUTH=user:pass or TOKEN=<appliance API key>. Both go to curl through a config file, so
 # neither appears on a command line where `ps` would show it.
@@ -69,6 +72,77 @@ check "view: open high-or-urgent" "$HIGH" "$(echo "$V" | py 'import json,sys; pr
 V=$(view ChatwootOpenCasesByAccount '{"limit": 100000}')
 check "view: busiest account" "$TOP" "$(echo "$V" | py 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["account"], r["openCases"]))')"
 check "view: open cases summed over accounts" "$OPEN" "$(echo "$V" | py 'import json,sys; print(sum(r["openCases"] for r in json.load(sys.stdin)["data"]))')"
+
+echo "== L3: one company costs that company, not the desk =="
+# The busiest open company is the hardest single-company case the desk has. Its ground truth comes
+# from walking EVERY case through the plain list endpoint, which the account door does not use.
+ACCT=${TOP%%:*}
+ACCT_TRUTH=$(py "
+import json, urllib.request
+allc = opn = 0; ids = []; page = 1
+while True:
+    req = urllib.request.Request('$API/conversations?status=all&assignee_type=all&sort_by=created_at_asc&page=%d' % page,
+                                 headers={'api_access_token': '$CHATWOOT_API_TOKEN'})
+    rows = json.load(urllib.request.urlopen(req))['data']['payload']
+    if not rows: break
+    for c in rows:
+        if c['custom_attributes'].get('account_key') == '$ACCT':
+            allc += 1; opn += c['status'] == 'open'; ids.append(c['id'])
+    page += 1
+print(allc, opn, ids[-1])")
+set -- $ACCT_TRUTH; ACCT_ALL=$1; ACCT_OPEN=$2; ACCT_CASE=$3
+ACCT_PAGES=$(( (ACCT_ALL + 24) / 25 ))
+echo "  $ACCT: all=$ACCT_ALL open=$ACCT_OPEN (at most $ACCT_PAGES calls for one company)"
+# cost <json> -> "rows-or-n apiCalls deskCalls": a desk call on a one-company question is the defect.
+cost() { py 'import json,sys
+r = json.load(sys.stdin)
+if r.get("reason"): print("REFUSED", r.get("reason"), r.get("error"), file=sys.stderr)
+rows = r.get("rows") or []
+n = rows[0].get("n") if rows and "n" in rows[0] else len(rows)
+print(n, r.get("apiCalls", 0), sum(1 for c in r.get("apiCallLog", []) if c.startswith("chatwootConversationsByStatus")))'; }
+set -- $(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' RETURN count(c) AS n" | cost)
+check "one company's cases, by a bare accountKey pin" "$ACCT_ALL" "$1"
+check "  ...read without touching the desk door" "0" "$3"
+[ "$2" -le "$ACCT_PAGES" ] && echo "  ok   ...in $2 call(s)" || { echo "  FAIL ...in $2 calls, more than $ACCT_PAGES"; fail=1; }
+set -- $(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' AND c.status = 'open' RETURN count(c) AS n" | cost)
+check "one company's OPEN cases (status pushed into the filter)" "$ACCT_OPEN" "$1"
+check "  ...read without touching the desk door" "0" "$3"
+V=$(view ChatwootCasesForCompany "{\"account\": \"$ACCT\"}")
+check "view: ChatwootCasesForCompany rows" "$ACCT_ALL" "$(echo "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
+V=$(view ChatwootCasesForCompany "{\"account\": \"$ACCT\", \"status\": \"open\"}")
+check "view: ChatwootCasesForCompany open rows" "$ACCT_OPEN" "$(echo "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
+
+echo "== L4: a thread is read whole =="
+# Chatwoot answers a bare messages call with the latest 20 only; the realm asks for the range.
+THREAD=$(cw "/conversations/$ACCT_CASE/messages?after=0&before=2147483648" | py 'import json,sys; print(len(json.load(sys.stdin)["payload"]))')
+N=$(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' AND c.id = $ACCT_CASE MATCH (c)-[:HAS_MESSAGE]->(m:SupportMessage) RETURN count(m) AS n" | py 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])')
+check "messages on case $ACCT_CASE" "$THREAD" "$N"
+
+echo "== L5: words in threads are found by Chatwoot's search, not by reading every thread =="
+# TERM defaults to the longest word of that case's opening message; override with TERM=...
+TERM_=${TERM_TEXT:-$(cw "/conversations/$ACCT_CASE/messages?after=0&before=2147483648" | py 'import json,sys,re
+ms = [m for m in json.load(sys.stdin)["payload"] if m.get("message_type") in (0, 1) and m.get("content")]
+print(max(re.findall(r"[A-Za-z]{6,}", ms[0]["content"]), key=len).lower())')}
+FOUND=$(py "
+import json, urllib.request, urllib.parse
+ids = set(); page = 1
+while True:
+    req = urllib.request.Request('$API/conversations?assignee_type=all&sort_by=created_at_asc&q=%s&page=%d' % (urllib.parse.quote('$TERM_'), page),
+                                 headers={'api_access_token': '$CHATWOOT_API_TOKEN'})
+    rows = json.load(urllib.request.urlopen(req))['data']['payload']
+    ids |= {c['id'] for c in rows}
+    if len(rows) < 25: break
+    page += 1
+print(len(ids), page)")
+set -- $FOUND; TEXT_CASES=$1; TEXT_PAGES=$2
+echo "  '$TERM_': Chatwoot finds it in $TEXT_CASES conversations ($TEXT_PAGES search page(s))"
+R=$(view ChatwootCasesMentioning "{\"text\": \"$TERM_\", \"limit\": 100000}")
+check "view: ChatwootCasesMentioning cases" "$TEXT_CASES" "$(echo "$R" | py 'import json,sys; print(len({r["caseId"] for r in json.load(sys.stdin)["data"]}))')"
+check "  ...every row's message contains the words" "0" "$(echo "$R" | py "import json,sys; print(sum('$TERM_' not in (r['message'] or '').lower() for r in json.load(sys.stdin)['data']))")"
+set -- $(kg "MATCH (:ChatwootTextSearch {text: '$TERM_'})-[:HAS_CASE]->(c:SupportCase) MATCH (c)-[:HAS_MESSAGE]->(m:SupportMessage) WHERE toLower(m.body) CONTAINS '$TERM_' RETURN count(DISTINCT c) AS n" | cost)
+[ "$2" -le $((TEXT_PAGES + TEXT_CASES)) ] && echo "  ok   ...in $2 call(s), at most $TEXT_PAGES search + $TEXT_CASES threads" \
+  || { echo "  FAIL ...in $2 calls, more than $TEXT_PAGES search + $TEXT_CASES threads"; fail=1; }
+check "  ...without touching the desk door" "0" "$3"
 
 echo "== the write verbs, against a scratch conversation =="
 # Opt-in, because it writes to the Chatwoot it is pointed at, even though it cleans up after itself.

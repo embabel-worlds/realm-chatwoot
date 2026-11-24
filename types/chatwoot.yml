@@ -5,79 +5,129 @@
 #
 # EVERY type is virtual. Nothing is mirrored; a traversal reads Chatwoot at query time.
 #
-#   MATCH (d:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase)
-#   WHERE c.priority IN ['urgent', 'high']
-#   RETURN c.accountKey, c.subject, c.priority, c.openedOn
+# FOUR DOORS ONTO A CASE, all HAS_CASE, and the cheapest one that answers is the one to use:
 #
-# WHERE THE SHARED PROPERTIES COME FROM. Chatwoot is an inbox: a conversation has no subject,
-# no company, and only the time its row was created. A desk that wants those records them as
-# conversation custom attributes, which is what Chatwoot provides them for, and this realm
-# reads the ones named below. seed/load_book.py writes exactly these.
+#   MATCH (c:SupportCase) WHERE c.accountKey = 'acme.com'                     one company: one call
+#   MATCH (:ChatwootTextSearch {text:'refund'})-[:HAS_CASE]->(c)              cases whose messages say it
+#   MATCH (:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase)        the whole open desk
+#   MATCH (a:CustomerAccount)-[:HAS_CASE]->(c:SupportCase)                    from the vocabulary's spine
 #
-# WHERE CHATWOOT'S SHAPE DIFFERS FROM THE CONTRACT, the producers' `compute:` closes the gap
-# rather than leaving it to every reader:
-#   sourceUrl     built from the conversation id: <chatwoot>/app/accounts/<account>/conversations/<id>
-#                 (the host is the demo stack's, as in realm-odoo).
-#   status        Chatwoot's four words folded into the vocabulary's three: `snoozed` is pending.
-#   fromCustomer  on a message, from Chatwoot's integer message_type (0 the customer, 1 an agent,
-#                 2 Chatwoot's own activity line), which stays beside it as `messageType`.
-#   sentOn        on a message, the day, from its epoch-seconds `sentAt`.
+# The first needs no door written: the account join declares `materializedKeyField: accountKey`, so
+# a case pinned on its company is fetched through ChatwootCompanyCases by itself. A bare
+# `MATCH (c:SupportCase)` with no such pin is the desk at its default, 'all'.
+#
+# WHERE THE SHARED PROPERTIES COME FROM. Chatwoot is an inbox: a conversation has no subject, no
+# company, and only the time its row was created. A desk that wants those records them as
+# conversation custom attributes, which is what Chatwoot provides them for, and this realm reads
+# the ones named below. seed/load_book.py writes exactly these.
+#
+# DATES, because there are two kinds and they answer different questions. openedOn, updatedOn and
+# closedOn are the BUSINESS days the desk recorded (custom attributes, 'YYYY-MM-DD' text). createdAt,
+# lastActivityAt and waitingSince are Chatwoot's own clock, in epoch seconds: when the row was made,
+# when anything last happened in the thread, and since when the customer has been waiting. A desk
+# loaded from another system has every createdAt on the day it was loaded; its openedOn is the truth.
 
 - name: ChatwootDesk
   visibility: internal
   userAnchor: false
   description: >-
-    The support desk, as a door onto its conversations, pinned by the status you want:
-    'all' (the default, so a bare MATCH (d:ChatwootDesk) means the whole desk), 'open',
-    'pending', 'resolved' or 'snoozed'. The status is pushed to Chatwoot, so asking for open
-    cases fetches only those. It is not stored and does not need to exist.
+    The whole support desk as a door onto its cases, pinned by Chatwoot status: 'all' (the
+    default), 'open', 'pending', 'resolved' or 'snoozed'. The status goes to Chatwoot, so open
+    cases fetch only those, 25 to a page. For ONE company pin the case's accountKey instead, which
+    asks Chatwoot for that company alone. Not stored.
   properties:
-    status: { metadata: { identity: "true", default: "all" } }
+    status:
+      metadata: { identity: "true", default: "all" }
+      description: "Chatwoot's own status word, exactly: all, open, pending, resolved or snoozed."
+
+- name: ChatwootCompanyCases
+  visibility: internal
+  userAnchor: false
+  description: >-
+    One company's cases, asked of Chatwoot by the company's domain: MATCH (c:SupportCase) WHERE
+    c.accountKey = 'acme.com' is answered through this door without it being written, in one call
+    for a company with up to 25 cases, instead of reading the whole desk. Exact domain, lower case,
+    no www. Not stored.
+  properties:
+    accountKey:
+      identity: true
+      description: "The company's domain as the desk records it on each case (custom attribute account_key), e.g. acme.com."
+
+- name: ChatwootTextSearch
+  visibility: internal
+  userAnchor: false
+  description: >-
+    The cases whose thread contains some text, found by Chatwoot's own search in one call per 25
+    cases rather than by reading every thread: MATCH (:ChatwootTextSearch {text:'refund'})-[:HAS_CASE]->(c).
+    Case-insensitive, anywhere in a customer's or an agent's message (private notes included), all
+    of history; Chatwoot's activity lines are not searched. Every status. Not stored.
+  properties:
+    text:
+      identity: true
+      description: "The words to look for, as one phrase: matched as a case-insensitive substring of a message, not as separate words."
 
 - name: ChatwootConversation
   visibility: internal
   userAnchor: false
   parents: [SupportCase]
   description: >-
-    One conversation in Chatwoot: a customer's problem, question or request, and a
-    SupportCase of the business vocabulary. accountKey, subject, kind and the three dates are
-    conversation custom attributes the desk maintains; everything else is Chatwoot's own.
+    One Chatwoot conversation, a SupportCase. id is Chatwoot's number. accountKey is the company
+    domain: pin it to read one company in one call. status: open, pending (snoozed included),
+    resolved. openedOn/updatedOn/closedOn are business days (YYYY-MM-DD); createdAt and
+    lastActivityAt are epoch seconds. Custom attributes the desk maintains: accountKey, subject,
+    kind, the three days, replyCount, caseRef; the rest is Chatwoot's own.
   properties:
-    id: { identity: true, description: "Chatwoot's conversation number, as shown in its UI and its URLs." }
+    id: { type: int, identity: true, description: "Chatwoot's conversation number, as shown in its UI and in its URLs." }
     # Keys the vocabulary's CustomerAccount spine. A company support is helping may be one the
     # CRM does not track and billing does not invoice; without this it is an account nowhere, and
     # an account-level view cannot see the very customers most likely to be falling through.
     accountKey:
       hub: CustomerAccount
-      description: "The requester's company domain (custom attribute account_key)."
+      description: "The requester's company domain, lower case, e.g. acme.com (custom attribute account_key). Pinning it asks Chatwoot for that company alone."
     subject: "One line saying what the case is about (custom attribute subject)."
-    status: "open, pending, resolved — or snoozed, Chatwoot's own fourth state."
-    priority: "urgent, high, medium or low; empty when none was set."
+    status: "open, pending or resolved. Chatwoot's snoozed (waiting on a date) reads as pending here; pin ChatwootDesk {status:'snoozed'} to tell them apart."
+    priority: "urgent, high, medium or low; null when none was set."
     kind: "bug, feature-request, question, documentation or enhancement (custom attribute kind)."
-    requesterEmail: "The contact's email."
+    requesterEmail: "The contact's email address."
     requesterName: "The contact's name."
-    requesterCompany: { description: "The company name the contact gave.", metadata: { canonical: name } }
-    openedOn: "The day the customer raised it (custom attribute opened_on)."
-    updatedOn: "The day anything last happened on it (custom attribute updated_on)."
-    closedOn: "The day it was resolved (custom attribute closed_on); empty while open."
-    replyCount: { type: int, description: "How much back-and-forth there has been (custom attribute reply_count)." }
+    requesterCompany: { description: "The company name the contact gave, as they wrote it. Not a key; accountKey is.", metadata: { canonical: name } }
+    openedOn: "The business day the customer raised it, YYYY-MM-DD (custom attribute opened_on)."
+    updatedOn: "The business day anything last happened on it, YYYY-MM-DD (custom attribute updated_on)."
+    closedOn: "The business day it was resolved, YYYY-MM-DD (custom attribute closed_on); null while not resolved."
+    replyCount: { type: int, description: "How many replies the thread has had, as the desk counts them (custom attribute reply_count)." }
     caseRef: "The desk's own reference for the case, where it keeps one (custom attribute case_id)."
-    labels: "Chatwoot's labels on the conversation."
-    tags: "The same labels, under the business vocabulary's name for them."
+    labels: { type: any, description: "Chatwoot's labels on the conversation, a list of words." }
+    tags: { type: any, description: "The same labels, under the business vocabulary's name for them." }
     waitingSince: { type: int, description: "Epoch seconds since when the customer has been waiting for a reply; 0 when they are not." }
-    deskStatus: "Echo of the desk status this conversation was fetched under."
-    accountKeyAsked: "Echo of the account key this conversation was fetched under."
+    createdAt: { type: int, description: "Epoch seconds when Chatwoot created the conversation row. Not the business day; openedOn is." }
+    lastActivityAt: { type: int, description: "Epoch seconds of the latest message of any kind in the thread. Moves on every new message." }
+    deskStatus: "Echo of the ChatwootDesk status this case was fetched under (Chatwoot's word, e.g. all or snoozed)."
+    accountKeyAsked: "Echo of the company domain this case was fetched under."
+    textAsked: "Echo of the text search this case was found by."
   virtualJoins:
     - { anchorLabel: ChatwootDesk, relationship: HAS_CASE, keyField: status,
         recordKeyField: deskStatus, producer: chatwootConversationsByStatus, maxFanoutTotal: 50000,
-        description: "Every conversation on the desk in this status ('all' for every status)." }
+        description: "Every case on the desk in this Chatwoot status ('all' for every status), 25 to a page." }
+    # ONE COMPANY, by itself. `materializedKeyField: accountKey` is this realm's statement that every
+    # case the account producer returns carries the company in accountKey — Chatwoot filtered on that
+    # very attribute — so the engine answers a case pinned on accountKey (`{accountKey: 'acme.com'}`,
+    # `WHERE c.accountKey = $x`, an IN list) through this door instead of sweeping the desk. A pin on
+    # anything else (priority, requesterEmail) still sweeps.
+    - { anchorLabel: ChatwootCompanyCases, relationship: HAS_CASE, keyField: accountKey,
+        recordKeyField: accountKeyAsked, materializedKeyField: accountKey,
+        producer: chatwootConversationsByAccount,
+        description: "One company's cases, by its domain: one Chatwoot filter call per 25 cases." }
+    - { anchorLabel: ChatwootTextSearch, relationship: HAS_CASE, keyField: text,
+        recordKeyField: textAsked, producer: chatwootConversationsByText,
+        description: "The cases with a customer or agent message containing this text, case-insensitively." }
     # The vocabulary's own edge, from the vocabulary's own anchor: ANY CRM realm whose accounts
     # carry an accountKey reaches this desk's cases through it, and this realm has never heard
     # of that CRM. One call per account — Chatwoot's filter does not take an IN-list.
     # ridesHub: when a query has already swept the desk (`(:ChatwootDesk {status:'all'})-[:HAS_CASE]->`),
     # this edge is answered from those cases by the account's domain — the spine's own key — instead
     # of one fetch per account, which is refused above 200 accounts (embabel/me#1489). The author's
-    # assertion: a sweep of ALL statuses is every case this edge should reach.
+    # assertion: a sweep of ALL statuses is every case this edge should reach. It declares no
+    # materializedKeyField on purpose: a ride with one MINTS accounts instead of linking the spine's.
     - { anchorLabel: CustomerAccount, relationship: HAS_CASE, keyField: accountKey,
         recordKeyField: accountKeyAsked, producer: chatwootConversationsByAccount, ridesHub: true,
         description: "A customer account's support cases, matched on the company domain." }
@@ -87,17 +137,23 @@
   userAnchor: false
   parents: [SupportMessage]
   description: >-
-    One message in a conversation's thread, and a SupportMessage of the business vocabulary.
-    Read messageType before reading the words: 0 is the customer, 1 is an agent, 2 is
-    Chatwoot's own activity line ("priority set to high") and says nothing about anyone.
+    One message in a Chatwoot conversation's thread, and a SupportMessage. Read messageType before
+    the words: 0 the customer, 1 an agent, 2 Chatwoot's own activity line ("priority set to high"),
+    3 a template. internal marks a private note the customer never saw. sentAt is epoch seconds,
+    sentOn its day. The whole thread is read, oldest first, up to 1,000 messages.
   properties:
-    id: { identity: true, description: "Chatwoot's message id." }
-    body: "The message text."
-    messageType: { type: int, description: "0 customer, 1 agent, 2 activity, 3 template." }
+    id: { type: int, identity: true, description: "Chatwoot's message id; ids grow within a desk, so they order a thread." }
+    body: "The message text as written, markdown included; null for an attachment with no words."
+    messageType: { type: int, description: "Who it is from: 0 customer, 1 agent, 2 Chatwoot activity line, 3 template." }
+    fromCustomer: { type: boolean, description: "True when the customer wrote it (messageType 0)." }
     internal: { type: boolean, description: "True for a private note between staff that the customer never saw." }
     sentAt: { type: int, description: "Epoch seconds when it was sent." }
-    conversationKey: "Echo of the conversation this message was fetched for."
+    sentOn: "The day it was sent, YYYY-MM-DD, UTC."
+    conversationKey: "Echo of the conversation this message was fetched for: its id and last activity, joined by U+001F."
   virtualJoins:
-    - { anchorLabel: ChatwootConversation, relationship: HAS_MESSAGE, keyField: id,
+    # Keyed on the conversation AND its last activity, so the thread is cached until something is
+    # said in it (producers/chatwoot.yml, chatwootMessagesByConversation).
+    - { anchorLabel: ChatwootConversation, relationship: HAS_MESSAGE,
+        producerKeyFields: [id, lastActivityAt],
         recordKeyField: conversationKey, producer: chatwootMessagesByConversation,
-        description: "The messages of this conversation, oldest first." }
+        description: "The messages of this conversation, oldest first; one call per conversation, cached until the thread moves." }
