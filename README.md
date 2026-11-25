@@ -117,7 +117,7 @@ commit `dist/` with it.
 ## Setup
 
 1. **realm-business-vocabulary installed first.** It declares `SupportCase` and
-   `SupportMessage`. A realm cannot yet declare that it needs another.
+   `SupportMessage`. The realm `requires` it, so installing this realm brings it in.
 2. A Chatwoot and a user's access token (Profile settings → Access Token). For a demo,
    `stack/` brings one up and mints the token.
 3. `CHATWOOT_API_TOKEN` in the appliance's environment (`secrets.env` beside the compose file
