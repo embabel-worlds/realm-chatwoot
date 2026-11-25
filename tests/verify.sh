@@ -34,6 +34,76 @@ cw() { curl -s "$API$1" -H "api_access_token: $CHATWOOT_API_TOKEN"; }
 kg() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
          -d "$(python3 -c 'import json,sys; print(json.dumps({"cypher": sys.argv[1]}))' "$1")"; }
 view() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'Content-Type: application/json' -d "{\"args\":$2}"; }
+# Whether an answer is the whole truth is the ENGINE's to say, and it says it beside the rows: a
+# query's `error`, `reason` and `warnings` (each opening with its code), a view's `status`,
+# `outcome` and `warnings`. A figure read past them reported a source that failed under load, or a
+# page it capped, as drift in the realm. So every figure goes through short(): a refusal prints
+# REFUSED and a short answer PARTIAL <figure>: <the engine's reason>, which no check expects.
+SHORT_PY=$(cat <<'PY'
+import json, sys
+# Raw warning codes that mean rows or values may be missing (the engine's incompleteness kinds).
+# Cost notes (FILTERED_IN_GRAPH, AGGREGATE_NOT_PUSHED, EMPTY_NOT_KEPT, PUSHDOWN_VALUE_UNMATCHED),
+# FILTER_STARVED (an honest empty), STALE_COPY, FIELDS_WITHHELD and UNKNOWN_VIA leave every row in place.
+SHORT_CODES = (
+    "PARTIAL_RESULT", "PRODUCER_ERROR", "NEEDS_FILTER", "NEEDS_PRODUCER", "FILTER_REJECTED",
+    "UNPUSHED_FILTER", "AMBIGUOUS_LABEL", "INCOMPLETE_TRAVERSAL", "INCOMPLETE_RANKING",
+    "INCOMPLETE_AGGREGATE", "INCOMPLETE_INPUT", "MATERIALIZATION_FAILED", "REDUCTION_FAILED",
+    "UNPARSEABLE_ANSWER", "TERMS_UNAVAILABLE", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
+    "FOLLOW_CAPPED", "UNLINKED_CHILDREN", "RESOLUTION_DROPPED", "AGENTIC_DEGRADED",
+    "SOURCE_UNANSWERED",
+)
+# The typed `reason` a query result carries when it is not a clean answer and not an honest empty.
+SHORT_REASONS = ("UNBOUNDED", "PARTIAL_NOT_MATCHED", "UNPUSHED_FILTER", "DISCONNECTED",
+                 "INTERNAL_ERROR", "WRITE_IN_PROGRESS", "KILLED", "TOO_EXPENSIVE")
+# Public warning codes on a view envelope that mean the same.
+SHORT_PUBLIC = ("PARTIAL", "REDUCTION_FAILED", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
+                "AGENTIC_DEGRADED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "SOURCE_REJECTED",
+                "INVALID_FILTER", "UNPUSHED_FILTER", "TOO_BROAD", "FETCH_CAPPED",
+                "INDEX_UNAVAILABLE", "ARGUMENT_REFUSED")
+
+
+def short(d, figure=None):
+    tag = "PARTIAL" if figure is None else "PARTIAL %s" % (figure,)
+    if not isinstance(d, dict):
+        return "REFUSED: not an engine answer: " + str(d)[:160]
+    if "outcome" in d or "status" in d:  # a view envelope
+        err = d.get("error") or {}
+        if d.get("status") != "SUCCEEDED":
+            return "REFUSED: %s %s" % (d.get("status"), (err.get("code", "") + " " + err.get("message", "")).strip()[:160] if isinstance(err, dict) else str(err)[:160])
+        ws = [w for w in d.get("warnings") or [] if isinstance(w, dict) and w.get("code") in SHORT_PUBLIC]
+        if d.get("outcome") not in ("OK", "EMPTY") or ws:
+            why = ws[0]["code"] + ": " + ws[0].get("message", "") if ws else "outcome " + str(d.get("outcome"))
+            return "%s: %s" % (tag, why[:200])
+        return None
+    if d.get("error"):
+        return "REFUSED: " + str(d["error"])[:160]
+    if d.get("run"):
+        return "%s: the run had not finished (%s)" % (tag, d["run"])
+    ws = [w for w in d.get("warnings") or [] if isinstance(w, str) and w.split(":", 1)[0].strip() in SHORT_CODES]
+    if ws:
+        return "%s: %s" % (tag, ws[0][:200])
+    if d.get("reason") in SHORT_REASONS:
+        return "%s: reason %s" % (tag, d["reason"])
+    return None
+PY
+)
+# The figure in column n of a query answer on stdin.
+n() { python3 -c "$SHORT_PY
+d = json.load(sys.stdin); r = d.get('rows') or []
+v = r[0].get('n') if r else 0
+print(short(d, v) or v)"; }
+# How many rows a view answered. Read from stdin: a whole book of rows passed as an argument is past
+# the system's argument limit.
+rows() { printf '%s' "$1" | python3 -c "$SHORT_PY
+d = json.load(sys.stdin); data = d.get('data') if isinstance(d, dict) else None
+v = len(data) if isinstance(data, list) else 0
+print(short(d, v) or v)"; }
+# whole ANSWER SNIPPET: run SNIPPET over the parsed answer, as `d`, only when the engine says it is
+# whole; otherwise print why it is not, in place of the figure.
+whole() { printf '%s' "$1" | python3 -c "$SHORT_PY
+d = json.load(sys.stdin); s = short(d)
+if s: print(s); sys.exit(0)
+$2"; }
 
 echo "== L0: ground truth, from Chatwoot directly =="
 count() { cw "/conversations?status=$1&assignee_type=all" | py 'import json,sys; print(json.load(sys.stdin)["data"]["meta"]["all_count"])'; }
@@ -57,23 +127,23 @@ TOP=${TRUTH% *}; HIGH=${TRUTH#* }
 echo "  all=$ALL open=$OPEN resolved=$RESOLVED  busiest(account:open)=$TOP  open-high-or-urgent=$HIGH"
 
 echo "== L1: the traversal, by the VOCABULARY's label, reconciles =="
-N=$(kg "MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase) RETURN count(c) AS n" | py 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])')
+N=$(kg "MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase) RETURN count(c) AS n" | n)
 check "cases, asked for as SupportCase" "$ALL" "$N"
-N=$(kg "MATCH (d:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase) RETURN count(c) AS n" | py 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])')
+N=$(kg "MATCH (d:ChatwootDesk {status:'open'})-[:HAS_CASE]->(c:SupportCase) RETURN count(c) AS n" | n)
 check "open cases (status pushed to Chatwoot)" "$OPEN" "$N"
-N=$(kg "MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:ChatwootConversation) RETURN count(c) AS n" | py 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])')
+N=$(kg "MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:ChatwootConversation) RETURN count(c) AS n" | n)
 check "the same cases, asked for as ChatwootConversation" "$ALL" "$N"
 
 echo "== L2: the views reconcile =="
 V=$(view ChatwootCaseCounts '{}')
-check "view: open"     "$OPEN"     "$(printf "%s\n" "$V" | py 'import json,sys; print({r["status"]: r["cases"] for r in json.load(sys.stdin)["data"]}.get("open", 0))')"
-check "view: resolved" "$RESOLVED" "$(printf "%s\n" "$V" | py 'import json,sys; print({r["status"]: r["cases"] for r in json.load(sys.stdin)["data"]}.get("resolved", 0))')"
+check "view: open"     "$OPEN"     "$(whole "$V" 'import json,sys; print({r["status"]: r["cases"] for r in d["data"]}.get("open", 0))')"
+check "view: resolved" "$RESOLVED" "$(whole "$V" 'import json,sys; print({r["status"]: r["cases"] for r in d["data"]}.get("resolved", 0))')"
 V=$(view ChatwootOpenCases '{"limit": 100000}')
-check "view: open case rows" "$OPEN" "$(printf "%s\n" "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
-check "view: open high-or-urgent" "$HIGH" "$(printf "%s\n" "$V" | py 'import json,sys; print(sum(r["priority"] in ("urgent","high") for r in json.load(sys.stdin)["data"]))')"
+check "view: open case rows" "$OPEN" "$(rows "$V")"
+check "view: open high-or-urgent" "$HIGH" "$(whole "$V" 'import json,sys; print(sum(r["priority"] in ("urgent","high") for r in d["data"]))')"
 V=$(view ChatwootOpenCasesByAccount '{"limit": 100000}')
-check "view: busiest account" "$TOP" "$(printf "%s\n" "$V" | py 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["account"], r["openCases"]))')"
-check "view: open cases summed over accounts" "$OPEN" "$(printf "%s\n" "$V" | py 'import json,sys; print(sum(r["openCases"] for r in json.load(sys.stdin)["data"]))')"
+check "view: busiest account" "$TOP" "$(whole "$V" 'import json,sys; r=d["data"][0]; print("%s:%d" % (r["account"], r["openCases"]))')"
+check "view: open cases summed over accounts" "$OPEN" "$(whole "$V" 'import json,sys; print(sum(r["openCases"] for r in d["data"]))')"
 
 echo "== L3: one company costs that company, not the desk =="
 # The busiest open company is the hardest single-company case the desk has. Its ground truth comes
@@ -98,12 +168,15 @@ echo "  $ACCT: all=$ACCT_ALL open=$ACCT_OPEN (at most $ACCT_PAGES calls for one 
 # cost <json> -> "rows-or-n apiCalls deskCalls fetchedRecords". apiCalls is what THIS run asked the
 # source, so a warm cache reads 0; fetchedRecords counts cache-served records too, so it is the
 # figure that says how much of the desk a question touched whatever the cache holds.
-cost() { py 'import json,sys
+# A figure the engine marks short or refused is no figure: its first field is then the single word
+# PARTIAL or REFUSED, which no check expects, and the engine's reason goes to stderr beside it.
+cost() { python3 -c "$SHORT_PY
 r = json.load(sys.stdin)
-if r.get("reason"): print("REFUSED", r.get("reason"), r.get("error"), file=sys.stderr)
-rows = r.get("rows") or []
-n = rows[0].get("n") if rows and "n" in rows[0] else len(rows)
-print(n, r.get("apiCalls", 0), sum(1 for c in r.get("apiCallLog", []) if c.startswith("chatwootConversationsByStatus")), r.get("fetchedRecords") or 0)'; }
+rows = r.get('rows') or []
+n = rows[0].get('n') if rows and 'n' in rows[0] else len(rows)
+s = short(r, n)
+if s: print('  ' + s, file=sys.stderr); n = s.split()[0].rstrip(':')
+print(n, r.get('apiCalls', 0), sum(1 for c in r.get('apiCallLog', []) if c.startswith('chatwootConversationsByStatus')), r.get('fetchedRecords') or 0)"; }
 set -- $(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' RETURN count(c) AS n" | cost)
 check "one company's cases, by a bare accountKey pin" "$ACCT_ALL" "$1"
 check "  ...read without touching the desk door" "0" "$3"
@@ -114,14 +187,14 @@ set -- $(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' AND c.status = '
 check "one company's OPEN cases (status pushed into the filter)" "$ACCT_OPEN" "$1"
 check "  ...read without touching the desk door" "0" "$3"
 V=$(view ChatwootCasesForCompany "{\"account\": \"$ACCT\"}")
-check "view: ChatwootCasesForCompany rows" "$ACCT_ALL" "$(printf "%s\n" "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
+check "view: ChatwootCasesForCompany rows" "$ACCT_ALL" "$(rows "$V")"
 V=$(view ChatwootCasesForCompany "{\"account\": \"$ACCT\", \"status\": \"open\"}")
-check "view: ChatwootCasesForCompany open rows" "$ACCT_OPEN" "$(printf "%s\n" "$V" | py 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
+check "view: ChatwootCasesForCompany open rows" "$ACCT_OPEN" "$(rows "$V")"
 
 echo "== L4: a thread is read whole =="
 # Chatwoot answers a bare messages call with the latest 20 only; the realm asks for the range.
 THREAD=$(cw "/conversations/$ACCT_CASE/messages?after=0&before=2147483648" | py 'import json,sys; print(len(json.load(sys.stdin)["payload"]))')
-N=$(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' AND c.id = $ACCT_CASE MATCH (c)-[:HAS_MESSAGE]->(m:SupportMessage) RETURN count(m) AS n" | py 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])')
+N=$(kg "MATCH (c:SupportCase) WHERE c.accountKey = '$ACCT' AND c.id = $ACCT_CASE MATCH (c)-[:HAS_MESSAGE]->(m:SupportMessage) RETURN count(m) AS n" | n)
 check "messages on case $ACCT_CASE" "$THREAD" "$N"
 
 echo "== L5: words in threads are found by Chatwoot's search, not by reading every thread =="
@@ -151,8 +224,8 @@ check "cases whose threads say it, by the text door" "$TEXT_CASES" "$1"
   || { echo "  FAIL ...in $2 calls, want 1 to $TEXT_PAGES search + $TEXT_CASES threads"; fail=1; }
 check "  ...without touching the desk door" "0" "$3"
 R=$(view ChatwootCasesMentioning "{\"text\": \"$TERM_\", \"limit\": 100000}")
-check "view: ChatwootCasesMentioning cases" "$TEXT_CASES" "$(printf "%s\n" "$R" | py 'import json,sys; print(len({r["caseId"] for r in json.load(sys.stdin)["data"]}))')"
-check "  ...every row's message contains the words" "0" "$(printf "%s\n" "$R" | py "import json,sys; print(sum('$TERM_' not in (r['message'] or '').lower() for r in json.load(sys.stdin)['data']))")"
+check "view: ChatwootCasesMentioning cases" "$TEXT_CASES" "$(whole "$R" 'import json,sys; print(len({r["caseId"] for r in d["data"]}))')"
+check "  ...every row's message contains the words" "0" "$(whole "$R" "import json,sys; print(sum('$TERM_' not in (r['message'] or '').lower() for r in d['data']))")"
 
 echo "== L6: a window on a business day is read from Chatwoot, not from the whole desk =="
 # Ground truth from the PLAIN LIST, which the desk door no longer uses, walked whole: every status
