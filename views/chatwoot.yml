@@ -40,8 +40,10 @@
            c.subject AS subject, c.priority AS priority, c.kind AS kind,
            c.requesterName AS requester, c.openedOn AS openedOn, c.replyCount AS replies,
            c.sourceUrl AS url
+    // The case number breaks the last tie, so the first $limit cases are the same whatever order the
+    // desk door read them in (it reads in last activity, which moves).
     ORDER BY CASE c.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2
-                             WHEN 'low' THEN 3 ELSE 4 END, c.replyCount DESC
+                             WHEN 'low' THEN 3 ELSE 4 END, c.replyCount DESC, caseId
     LIMIT $limit
 
 # One company, asked of Chatwoot for that company alone: one filter call for up to 25 cases, where
@@ -151,4 +153,4 @@
     MATCH (d:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c:SupportCase)
     RETURN c.accountKey AS account, c.requesterCompany AS company, count(c) AS cases,
            sum(CASE WHEN c.status IN ['open', 'pending'] THEN 1 ELSE 0 END) AS openOrPendingCases
-    ORDER BY openOrPendingCases DESC, cases DESC
+    ORDER BY openOrPendingCases DESC, cases DESC, account
