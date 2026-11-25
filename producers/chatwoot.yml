@@ -8,6 +8,9 @@
 #   MATCH (c:SupportCase) WHERE c.accountKey = 'acme.com'          one filter call (the account door)
 #   MATCH (:ChatwootDesk {status:'all'})-[:HAS_CASE]->(c)           every case, 25 to a page
 #
+# The desk door asks Chatwoot's filter, so a window on the business days (`openedOn > '2026-09-01'`)
+# goes to Chatwoot too; see the door for which comparisons can, and which it does not send.
+#
 # The engine takes the account door for the first form by itself, because the join declares
 # `materializedKeyField: accountKey` (types/chatwoot.yml).
 #
@@ -23,39 +26,104 @@
 # RACK_ATTACK_LIMIT on the server). A sweep of a large desk is tens of pages; a thread fan-out is one
 # call per conversation. Both are why the narrow doors exist and why the thread is cached long.
 
-# The desk by status — the scan door. The anchor key IS Chatwoot's own `status` argument, so the door
-# needs no invented parameter and the narrowing happens at the source.
+# The desk by status — the scan door. It asks Chatwoot's FILTER endpoint, not the plain list, because
+# the filter is the only one that takes a date: the list takes a status and nothing a case carries,
+# so "cases opened after September" used to read every page of the desk (69 calls for 1,717 cases)
+# and drop most of them in the graph. Through the filter the window goes to Chatwoot and only its
+# own cases come back (163 cases, 7 calls).
+#
+# THE KEY IS CHATWOOT'S OWN STATUS WORD, sent as the first clause. Each word asks exactly what the
+# list's `status=` did, verified on a running desk word for word (all 1,717, open 1,692, resolved 25,
+# pending 0, snoozed 0, each equal to the list's all_count):
+#   - 'all' is a status the filter itself understands as every status, so the door needs no clause
+#     left out and no second shape for it;
+#   - 'pending' is Chatwoot's pending ALONE and 'snoozed' Chatwoot's snoozed alone. The graph's
+#     `status = 'pending'` is both (see `compute`), which is why ChatwootDesk keeps Chatwoot's words
+#     rather than the graph's.
 - name: chatwootConversationsByStatus
   kind: api
-  operation: chatwootConversationsList
-  records: "$.data.payload[*]"
-  keyArg: status
+  operation: chatwootConversationsFilter
+  records: "$.payload[*]"
+  keyArg: "payload.0.values"
   # One status per call: a page walk belongs to one status, and 'all' is a status of its own.
   batchSafe: false
   echoKeyAs: deskStatus
   args:
-    assignee_type: all
-    # Load-bearing. Chatwoot's default order is by last activity, which MOVES while pages are being
-    # read: a conversation touched between two page reads is seen twice or not at all. Creation
-    # order does not move.
-    sort_by: created_at_asc
-  # Creation order, oldest first, so `ORDER BY c.createdAt LIMIT n` can stop after the pages it needs.
-  orderedBy: [{ property: createdAt }]
+    payload:
+      - attribute_key: status
+        filter_operator: equal_to
+        values: []
+        custom_attribute_type: null
+  # The filter answers in last-activity order, newest first, and takes no sort argument (read in the
+  # v4.17.1 source: FilterService#conversations is `sort_on_last_activity_at`, whatever is asked).
+  # That order MOVES: a conversation with a new message while the pages are being read jumps to the
+  # front, and is missed if the front page has been read. The pages after the first are fetched
+  # concurrently, once the first page's total says how many there are, so the window is the few
+  # seconds of one walk; what can go missing is only a conversation that changed during it, and a
+  # page boundary that shifts reads one case twice, which identity folds into one. The plain list
+  # could be read in creation order, which does not move, but it cannot be told a date, and every
+  # dated question paid for the whole desk to avoid that window.
+  orderedBy: [{ property: lastActivityAt, descending: true }]
   # 2,000 pages is 50,000 conversations: a mid-market desk's history, read once per cache window. The
-  # door's maxFanoutTotal matches it, or the engine would keep only its default 5,000 of what was read.
-  # `total`: the list answer carries the desk's count on every page, so after page one the walk knows
-  # how many pages remain and fetches them concurrently (me#1539).
-  paging: { style: page, param: page, size: 25, maxPages: 2000, total: data.meta.all_count }
-  # The list endpoint takes the status and nothing else that a case carries: a company, a priority, a
-  # date or an id in a query is the graph's to apply on this door, and an empty list says so. A query
-  # about ONE company does not come through here — see the account door below.
-  pushdown: []
-  # "How many are open" is in the FIRST response — `all_count` beside the page — so it costs one call
-  # rather than a walk, and it has no ceiling. `records: "$"` reads the ENVELOPE: the producer's own
-  # path selects a conversation, and a conversation carries no total (me#1402).
+  # join's maxFanoutTotal matches it, or the engine would keep only its default 5,000 of what was read.
+  paging: { style: page, param: page, size: 25, maxPages: 2000, total: meta.all_count }
+  # Each clause is a JSON object appended after the status clause, and `query_operator` on the
+  # PRECEDING clause is how Chatwoot spells AND (see the account door below for what else is fragile).
+  #
+  # Only what Chatwoot answers EXACTLY as the graph would is pushed, because a pushed filter is
+  # trusted: the engine may skip its own comparison and push a LIMIT over what comes back. Each rule
+  # was checked on a running desk against the same comparison applied to a full walk.
+  pushdown:
+    # NOT pushed here: a status or a priority on the CASE. Chatwoot would apply either exactly (the
+    # company door below pushes both), but on this door an equality the source absorbs lets the
+    # engine answer `count(c)` from the envelope's total, and today that count comes back as 1
+    # whatever the total (`WHERE c.status = 'resolved' RETURN count(c)` answered 1 for 25 resolved
+    # cases). A wrong number is worse than a walk, so the graph applies them after the walk. The
+    # door's own key is the status lever: (:ChatwootDesk {status:'resolved'}) asks for those alone.
+    #
+    # THE BUSINESS DAYS. The desk defines opened_on, updated_on and closed_on as DATE attributes, and
+    # Chatwoot compares a date attribute by the day, strictly: `is_greater_than` is `>` and
+    # `is_less_than` is `<`, a case without the attribute matching neither. The graph holds the same
+    # days as 'YYYY-MM-DD' text, whose order is the days' order, so a bare day written after `>` or
+    # `<` keeps the same cases at both ends (checked at the first quartile, the median and the last
+    # day of each attribute, the bound day itself included). The pattern takes a bare day only: a
+    # date-time names an instant, which a comparison by the day cannot keep exactly. Its capture
+    # group is load-bearing: the engine sends group 1, and a pattern without one refuses every value.
+    #
+    # `>=` and `<=` are NOT pushed, and cannot be: Chatwoot has no inclusive comparison, and the
+    # strict one would have to be told the day before, which a rule cannot compute. `openedOn >= D`
+    # still reads the whole status and is filtered in the graph; `openedOn > D-1` asks the same
+    # thing of Chatwoot. Equality on a day is not pushed either: the filter has no `equal_to` on a
+    # date that the engine could be sure means the same day.
+    - { property: openedOn, op: GREATER_THAN, valuePattern: '^(\d{4}-\d{2}-\d{2})$', argPath: payload.-,
+        clause: { attribute_key: opened_on, filter_operator: is_greater_than, values: ["{value}"], custom_attribute_type: conversation_attribute },
+        linkPrevious: { query_operator: AND } }
+    - { property: openedOn, op: LESS_THAN, valuePattern: '^(\d{4}-\d{2}-\d{2})$', argPath: payload.-,
+        clause: { attribute_key: opened_on, filter_operator: is_less_than, values: ["{value}"], custom_attribute_type: conversation_attribute },
+        linkPrevious: { query_operator: AND } }
+    - { property: updatedOn, op: GREATER_THAN, valuePattern: '^(\d{4}-\d{2}-\d{2})$', argPath: payload.-,
+        clause: { attribute_key: updated_on, filter_operator: is_greater_than, values: ["{value}"], custom_attribute_type: conversation_attribute },
+        linkPrevious: { query_operator: AND } }
+    - { property: updatedOn, op: LESS_THAN, valuePattern: '^(\d{4}-\d{2}-\d{2})$', argPath: payload.-,
+        clause: { attribute_key: updated_on, filter_operator: is_less_than, values: ["{value}"], custom_attribute_type: conversation_attribute },
+        linkPrevious: { query_operator: AND } }
+    - { property: closedOn, op: GREATER_THAN, valuePattern: '^(\d{4}-\d{2}-\d{2})$', argPath: payload.-,
+        clause: { attribute_key: closed_on, filter_operator: is_greater_than, values: ["{value}"], custom_attribute_type: conversation_attribute },
+        linkPrevious: { query_operator: AND } }
+    - { property: closedOn, op: LESS_THAN, valuePattern: '^(\d{4}-\d{2}-\d{2})$', argPath: payload.-,
+        clause: { attribute_key: closed_on, filter_operator: is_less_than, values: ["{value}"], custom_attribute_type: conversation_attribute },
+        linkPrevious: { query_operator: AND } }
+    # NOT pushed: createdAt and lastActivityAt. Chatwoot filters them by the DAY (`created_at::date`)
+    # and the graph holds them as epoch seconds, so no bound written in the graph's terms names the
+    # day Chatwoot would compare. A business-day question uses openedOn, which is the truth for a
+    # desk loaded from another system anyway (see the types' note on the two clocks).
+  # "How many" is `meta.all_count` on the FIRST response, so it costs one call rather than a walk.
+  # A count over a pushed window is read from the window's own pages instead (7 calls for 163 cases,
+  # measured): the engine does not take the count off the envelope when a filter went with it.
+  # `records: "$"` reads the ENVELOPE: a conversation carries no total (me#1402).
   aggregates:
     - measure: count
-      valueField: data.meta.all_count
+      valueField: meta.all_count
       records: "$"
   project:
     id: id

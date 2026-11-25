@@ -154,6 +154,60 @@ R=$(view ChatwootCasesMentioning "{\"text\": \"$TERM_\", \"limit\": 100000}")
 check "view: ChatwootCasesMentioning cases" "$TEXT_CASES" "$(printf "%s\n" "$R" | py 'import json,sys; print(len({r["caseId"] for r in json.load(sys.stdin)["data"]}))')"
 check "  ...every row's message contains the words" "0" "$(printf "%s\n" "$R" | py "import json,sys; print(sum('$TERM_' not in (r['message'] or '').lower() for r in json.load(sys.stdin)['data']))")"
 
+echo "== L6: a window on a business day is read from Chatwoot, not from the whole desk =="
+# Ground truth from the PLAIN LIST, which the desk door no longer uses, walked whole: every status
+# and the three business days of each case. Each bound is a day the desk holds (its median), so the
+# day itself is the case a strict comparison must leave out.
+DAYS=$(py "
+import json, urllib.request
+rows = []; page = 1
+while True:
+    req = urllib.request.Request('$API/conversations?status=all&assignee_type=all&sort_by=created_at_asc&page=%d' % page,
+                                 headers={'api_access_token': '$CHATWOOT_API_TOKEN'})
+    got = json.load(urllib.request.urlopen(req))['data']['payload']
+    if not got: break
+    rows += got; page += 1
+def days(k): return sorted(c['custom_attributes'].get(k) for c in rows if c['custom_attributes'].get(k))
+o, u, cl = days('opened_on'), days('updated_on'), days('closed_on')
+d, e, f = o[len(o) // 2], u[len(u) // 2], cl[len(cl) // 2]
+print(d, sum(x > d for x in o), sum(x < d for x in o), sum(x >= d for x in o),
+      e, sum(c['status'] == 'open' and (c['custom_attributes'].get('updated_on') or '') > e for c in rows),
+      f, sum(x > f for x in cl), sum(x < f for x in cl),
+      sum(c['status'] == 'resolved' and (c['custom_attributes'].get('closed_on') or '') > f for c in rows))")
+set -- $DAYS; DAY=$1; OPENED_AFTER=$2; OPENED_BEFORE=$3; OPENED_SINCE=$4; UDAY=$5; OPEN_UPDATED_AFTER=$6; CDAY=$7; CLOSED_AFTER=$8; CLOSED_BEFORE=$9; RESOLVED_CLOSED_AFTER=${10}
+echo "  opened after $DAY: $OPENED_AFTER, before: $OPENED_BEFORE, on or after: $OPENED_SINCE; open and updated after $UDAY: $OPEN_UPDATED_AFTER; closed after $CDAY: $CLOSED_AFTER, before: $CLOSED_BEFORE"
+WINDOW_PAGES=$(( (OPENED_AFTER + 24) / 25 ))
+# Read FRESH, so the cost is this question's and not a cache's.
+DESK="(:ChatwootDesk {status:'all'})-[:HAS_CASE {ai: {fresh: true}}]->(c:SupportCase)"
+# The cases themselves, not a count, so the walk is what is measured: a count is one call (below).
+set -- $(kg "MATCH $DESK WHERE c.openedOn > '$DAY' RETURN size(collect(DISTINCT c.id)) AS n" | cost)
+check "cases opened after $DAY" "$OPENED_AFTER" "$1"
+[ "$3" -le "$WINDOW_PAGES" ] && echo "  ok   ...in $3 desk call(s), the window's pages, not the desk's" \
+  || { echo "  FAIL ...in $3 desk calls, more than the window's $WINDOW_PAGES pages"; fail=1; }
+set -- $(kg "MATCH $DESK WHERE c.openedOn > '$DAY' RETURN count(c) AS n" | cost)
+check "how many opened after $DAY" "$OPENED_AFTER" "$1"
+[ "$3" -le "$WINDOW_PAGES" ] && echo "  ok   ...in $3 desk call(s)" \
+  || { echo "  FAIL ...in $3 desk calls, more than the window's $WINDOW_PAGES pages"; fail=1; }
+set -- $(kg "MATCH $DESK WHERE c.openedOn < '$DAY' RETURN count(c) AS n" | cost)
+check "how many opened before $DAY" "$OPENED_BEFORE" "$1"
+# Not pushed (Chatwoot has no inclusive comparison), so this is the graph's answer over the whole
+# status, and it must still be right.
+set -- $(kg "MATCH $DESK WHERE c.openedOn >= '$DAY' RETURN count(c) AS n" | cost)
+check "how many opened on or after $DAY (filtered in the graph)" "$OPENED_SINCE" "$1"
+set -- $(kg "MATCH (:ChatwootDesk {status:'open'})-[:HAS_CASE {ai: {fresh: true}}]->(c:SupportCase) WHERE c.updatedOn > '$UDAY' RETURN count(c) AS n" | cost)
+check "open cases updated after $UDAY" "$OPEN_UPDATED_AFTER" "$1"
+set -- $(kg "MATCH $DESK WHERE c.closedOn > '$CDAY' RETURN count(c) AS n" | cost)
+check "cases closed after $CDAY" "$CLOSED_AFTER" "$1"
+set -- $(kg "MATCH $DESK WHERE c.closedOn < '$CDAY' RETURN count(c) AS n" | cost)
+check "cases closed before $CDAY (a case never closed is in neither)" "$CLOSED_BEFORE" "$1"
+# A status on the case is applied in the graph on this door (see the producer), so this must still
+# count every resolved case, not a pushed total.
+set -- $(kg "MATCH $DESK WHERE c.status = 'resolved' RETURN count(c) AS n" | cost)
+check "resolved cases, a status on the case over the whole desk" "$RESOLVED" "$1"
+# A window and a status together: the window is sent, the status applied to what comes back.
+set -- $(kg "MATCH $DESK WHERE c.closedOn > '$CDAY' AND c.status = 'resolved' RETURN count(c) AS n" | cost)
+check "resolved cases closed after $CDAY" "$RESOLVED_CLOSED_AFTER" "$1"
+
 echo "== the write verbs, against a scratch conversation =="
 # Opt-in, because it writes to the Chatwoot it is pointed at, even though it cleans up after itself.
 if [ "$VERIFY_WRITES" = 1 ]; then

@@ -35,8 +35,11 @@
   description: >-
     The whole support desk as a door onto its cases, pinned by Chatwoot status: 'all' (the
     default), 'open', 'pending', 'resolved' or 'snoozed'. The status goes to Chatwoot, so open
-    cases fetch only those, 25 to a page. For ONE company pin the case's accountKey instead, which
-    asks Chatwoot for that company alone. Not stored.
+    cases fetch only those, 25 to a page, and so does a business day written after > or <
+    (c.openedOn > '2026-09-01', also updatedOn and closedOn): a dated question reads only its
+    window. >= and <= are filtered in the graph after reading the whole status, so write
+    > the day before. For ONE company pin the case's accountKey instead, which asks Chatwoot for
+    that company alone. Not stored.
   properties:
     status:
       metadata: { identity: "true", default: "all" }
@@ -118,7 +121,7 @@
   virtualJoins:
     - { anchorLabel: ChatwootDesk, relationship: HAS_CASE, keyField: status,
         recordKeyField: deskStatus, producer: chatwootConversationsByStatus, maxFanoutTotal: 50000,
-        description: "Every case on the desk in this Chatwoot status ('all' for every status), 25 to a page." }
+        description: "Every case on the desk in this Chatwoot status ('all' for every status), 25 to a page; a window on openedOn, updatedOn or closedOn written with > or < is sent to Chatwoot." }
     # ONE COMPANY, by itself. `materializedKeyField: accountKey` is this realm's statement that every
     # case the account producer returns carries the company in accountKey — Chatwoot filtered on that
     # very attribute — so the engine answers a case pinned on accountKey (`{accountKey: 'acme.com'}`,
@@ -152,6 +155,11 @@
       cypher: |
         MATCH (c:SupportCase) WHERE c.accountKey = 'acme.com' AND c.status = 'open'
         RETURN count(c) AS openCases
+    - q: "how many support cases were opened since the start of September"
+      cypher: |
+        MATCH (:ChatwootDesk {status: 'all'})-[:HAS_CASE]->(c:SupportCase)
+        WHERE c.openedOn > '2026-08-31'
+        RETURN count(c) AS opened
     - q: "which customers have written to support about refunds"
       cypher: |
         MATCH (:ChatwootTextSearch {text: 'refund'})-[:HAS_CASE]->(c:SupportCase)

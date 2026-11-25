@@ -19,9 +19,8 @@ how the rest of the business finds out what they know.
 ## What's inside
 
 - `apis/` — five operations of Chatwoot's application API, vendored and curated, each with
-  what was found by calling it or reading its source: `status` narrows at the source;
-  `sort_by=created_at_asc` is the only stable order to page by; the filter endpoint's `values` is
-  **not** an IN-list; `q` searches message text and then ignores `status`; a thread asked for
+  what was found by calling it or reading its source: the filter endpoint takes a status and a
+  window on a date attribute, and its `values` is **not** an IN-list; `q` searches message text and then ignores `status`; a thread asked for
   without `after`/`before` is only its latest 20 messages. Two of them write:
   - `chatwootConversationAssign` puts a conversation in an agent's or a team's queue
     (`assignee_id: 0` unassigns).
@@ -61,18 +60,28 @@ of what it costs:
 | Question | Door | Calls |
 |---|---|---|
 | everything open, counts by status, busiest companies | `ChatwootDesk` | one per 25 cases in that status (a count alone: one) |
+| cases opened, updated or closed after or before a day — `WHERE c.openedOn > '2026-09-01'` | `ChatwootDesk`, the window sent to Chatwoot | one per 25 cases in the window, a count too |
 | one company's cases — `WHERE c.accountKey = 'acme.com'` | `ChatwootCompanyCases`, taken by the engine itself | one per 25 of that company's cases (a count alone: one) |
 | which cases say some words | `ChatwootTextSearch` | one per 25 cases found, then one thread read per case found |
 | a case's thread | `HAS_MESSAGE` | one per case, cached until something is said in it |
 
 A query that pins a case's `accountKey` — inline, by `WHERE`, or with an `IN` list — goes through
 the company door without naming it, because the join declares `materializedKeyField: accountKey`.
-A filter on anything else a case carries (priority, requester, dates) is applied in the graph
-after the door it went through, so a question about one company should say the company. On the
-company door a status of `open` or `resolved` and a priority are sent to Chatwoot too; `pending`
-is not, because the graph's pending includes Chatwoot's snoozed.
+On the company door a status of `open` or `resolved` and a priority are sent to Chatwoot too;
+`pending` is not, because the graph's pending includes Chatwoot's snoozed. On the desk door a
+business day written after `>` or `<` (`c.openedOn > '2026-09-01'`, also `updatedOn` and
+`closedOn`) is sent, so a dated question reads only its window; a status on the case is not (name
+it on the door instead, `(:ChatwootDesk {status:'resolved'})`), for the reason the door gives.
+Anything else a case carries (requester, kind, the row clocks) is applied in the graph after the
+door it went through, so a question about one company should say the company.
 
 What is NOT pushed, and why:
+
+- **`>=` and `<=` on a business day.** Chatwoot compares a date attribute strictly, by the day, and
+  has no inclusive form; a rule cannot send the day before. `c.openedOn >= '2026-09-01'` reads the
+  whole status; `c.openedOn > '2026-08-31'` asks the same question in one window.
+- **`createdAt` and `lastActivityAt`.** Chatwoot filters them by the day and the graph holds epoch
+  seconds, so no bound in the graph's terms names the day Chatwoot compares. Use the business days.
 
 - **A bare `WHERE c.status = 'open'`** reads the desk at `all` and filters: the desk door is
   keyed by status, but the graph's status folds snoozed into pending, so a status on the case is
@@ -179,7 +188,10 @@ work, because no CRM realm can produce an `accountKey` yet: Odoo holds a website
 - The host reads producer YAML **without resolving anchors**, so the two conversation
   producers carry the same `project` written out twice. Keep them identical.
 - Chatwoot's **default conversation order moves while you page** (it is by last activity).
-  `sort_by=created_at_asc` does not.
+  `sort_by=created_at_asc` does not, but only the list takes it, and the list takes no date. The
+  desk door reads the filter, which is always in last-activity order: a case touched during the few
+  seconds of a walk can be missed, and the door's note says so. The text door still reads the list
+  in creation order.
 - A **thread asked for with no arguments is its latest 20 messages**, silently. The realm asks
   for `after=0&before=2147483648`, the whole thread oldest first up to 1,000.
 - A **thread is cached for a day, keyed on the conversation AND its last activity.** Chatwoot moves
