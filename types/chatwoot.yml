@@ -120,7 +120,7 @@
   virtualJoins:
     - { anchorLabel: ChatwootDesk, relationship: HAS_CASE, keyField: status,
         recordKeyField: deskStatus, producer: chatwootConversationsByStatus, maxFanoutTotal: 50000,
-        description: "Every case on the desk in this Chatwoot status ('all' for every status), 25 to a page; a bare-day bound on openedOn, updatedOn or closedOn is sent to Chatwoot." }
+        description: "Every case on the desk in this Chatwoot status ('all' for every status), 25 to a page; a bare-day bound on openedOn, updatedOn or closedOn, and a status of open or resolved or a priority on the case, are sent to Chatwoot." }
     # ONE COMPANY, by itself. `materializedKeyField: accountKey` is this realm's statement that every
     # case the account producer returns carries the company in accountKey — Chatwoot filtered on that
     # very attribute — so the engine answers a case pinned on accountKey (`{accountKey: 'acme.com'}`,

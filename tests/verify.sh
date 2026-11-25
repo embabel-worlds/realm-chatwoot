@@ -211,10 +211,28 @@ set -- $(kg "MATCH $DESK WHERE c.closedOn > '$CDAY' RETURN count(c) AS n" | cost
 check "cases closed after $CDAY" "$CLOSED_AFTER" "$1"
 set -- $(kg "MATCH $DESK WHERE c.closedOn < '$CDAY' RETURN count(c) AS n" | cost)
 check "cases closed before $CDAY (a case never closed is in neither)" "$CLOSED_BEFORE" "$1"
-# A status on the case is applied in the graph on this door (see the producer), so this must still
-# count every resolved case, not a pushed total.
+# A status on the case is sent to Chatwoot on this door, and a count over it is Chatwoot's total for
+# that filter: it must equal the resolved cases, and the rows read the same way must too.
 set -- $(kg "MATCH $DESK WHERE c.status = 'resolved' RETURN count(c) AS n" | cost)
-check "resolved cases, a status on the case over the whole desk" "$RESOLVED" "$1"
+check "resolved cases, a status on the case sent to Chatwoot" "$RESOLVED" "$1"
+check "  ...counted in one call" "1" "$3"
+set -- $(kg "MATCH $DESK WHERE c.status = 'resolved' RETURN size(collect(DISTINCT c.id)) AS n" | cost)
+check "  ...the same as the resolved rows" "$RESOLVED" "$1"
+[ "$3" -le $(( (RESOLVED + 24) / 25 + 1 )) ] && echo "  ok   ...rows in $3 desk call(s)" \
+  || { echo "  FAIL ...rows in $3 desk calls for $RESOLVED resolved cases"; fail=1; }
+set -- $(kg "MATCH $DESK WHERE c.status = 'open' AND c.priority = 'high' RETURN count(c) AS n" | cost)
+OPEN_HIGH=$(py "
+import json, urllib.request
+n = 0; page = 1
+while True:
+    req = urllib.request.Request('$API/conversations?status=open&assignee_type=all&sort_by=created_at_asc&page=%d' % page,
+                                 headers={'api_access_token': '$CHATWOOT_API_TOKEN'})
+    rows = json.load(urllib.request.urlopen(req))['data']['payload']
+    if not rows: break
+    n += sum(1 for c in rows if c.get('priority') == 'high'); page += 1
+print(n)")
+check "open high-priority cases, both sent to Chatwoot" "$OPEN_HIGH" "$1"
+check "  ...counted in one call" "1" "$3"
 # A window and a status together: the window is sent, the status applied to what comes back.
 set -- $(kg "MATCH $DESK WHERE c.closedOn > '$CDAY' AND c.status = 'resolved' RETURN count(c) AS n" | cost)
 check "resolved cases closed after $CDAY" "$RESOLVED_CLOSED_AFTER" "$1"

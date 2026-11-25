@@ -70,8 +70,8 @@ the company door without naming it, because the join declares `materializedKeyFi
 On the company door a status of `open` or `resolved` and a priority are sent to Chatwoot too;
 `pending` is not, because the graph's pending includes Chatwoot's snoozed. On the desk door a
 bare business day under `>`, `>=`, `<` or `<=` (`c.openedOn >= '2026-09-01'`, also `updatedOn` and
-`closedOn`) is sent, so a dated question reads only its window; a status on the case is not (name
-it on the door instead, `(:ChatwootDesk {status:'resolved'})`), for the reason the door gives.
+`closedOn`) is sent, so a dated question reads only its window, and so are a status of `open` or
+`resolved` and a priority on the case.
 Anything else a case carries (requester, kind, the row clocks) is applied in the graph after the
 door it went through, so a question about one company should say the company.
 
@@ -83,9 +83,8 @@ What is NOT pushed, and why:
 - **`createdAt` and `lastActivityAt`.** Chatwoot filters them by the day and the graph holds epoch
   seconds, so no bound in the graph's terms names the day Chatwoot compares. Use the business days.
 
-- **A bare `WHERE c.status = 'open'`** reads the desk at `all` and filters: the desk door is
-  keyed by status, but the graph's status folds snoozed into pending, so a status on the case is
-  not the door's key. Write `(:ChatwootDesk {status:'open'})` to read only the open ones.
+- **`WHERE c.status = 'pending'`** reads the desk at `all` and filters: the graph's pending folds in
+  Chatwoot's snoozed, which one Chatwoot status cannot say. `open` and `resolved` are sent.
 - **Words in a thread through `(c)-[:HAS_MESSAGE]->(m) WHERE m.body CONTAINS …`**: a filter on
   the message cannot narrow which conversations are read, so that shape reads one thread per case.
   Start from `ChatwootTextSearch` (or the `ChatwootCasesMentioning` view) and only the threads
