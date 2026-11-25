@@ -69,7 +69,7 @@ A query that pins a case's `accountKey` — inline, by `WHERE`, or with an `IN` 
 the company door without naming it, because the join declares `materializedKeyField: accountKey`.
 On the company door a status of `open` or `resolved` and a priority are sent to Chatwoot too;
 `pending` is not, because the graph's pending includes Chatwoot's snoozed. On the desk door a
-business day written after `>` or `<` (`c.openedOn > '2026-09-01'`, also `updatedOn` and
+bare business day under `>`, `>=`, `<` or `<=` (`c.openedOn >= '2026-09-01'`, also `updatedOn` and
 `closedOn`) is sent, so a dated question reads only its window; a status on the case is not (name
 it on the door instead, `(:ChatwootDesk {status:'resolved'})`), for the reason the door gives.
 Anything else a case carries (requester, kind, the row clocks) is applied in the graph after the
@@ -77,9 +77,9 @@ door it went through, so a question about one company should say the company.
 
 What is NOT pushed, and why:
 
-- **`>=` and `<=` on a business day.** Chatwoot compares a date attribute strictly, by the day, and
-  has no inclusive form; a rule cannot send the day before. `c.openedOn >= '2026-09-01'` reads the
-  whole status; `c.openedOn > '2026-08-31'` asks the same question in one window.
+- **A business-day bound with a time of day** (`c.openedOn >= '2026-09-01T12:00:00Z'`). Chatwoot
+  compares by the day, strictly; a bare day under `>=` or `<=` is sent moved by a day
+  (`granularity: day`), but part of a day cannot be said, so it stays in the graph.
 - **`createdAt` and `lastActivityAt`.** Chatwoot filters them by the day and the graph holds epoch
   seconds, so no bound in the graph's terms names the day Chatwoot compares. Use the business days.
 
@@ -117,7 +117,7 @@ commit `dist/` with it.
 ## Setup
 
 1. **realm-business-vocabulary installed first.** It declares `SupportCase` and
-   `SupportMessage`. A realm cannot yet declare that it needs another.
+   `SupportMessage`. The realm `requires` it, so installing this realm brings it in.
 2. A Chatwoot and a user's access token (Profile settings → Access Token). For a demo,
    `stack/` brings one up and mints the token.
 3. `CHATWOOT_API_TOKEN` in the appliance's environment (`secrets.env` beside the compose file

@@ -263,10 +263,13 @@ check "how many opened after $DAY" "$OPENED_AFTER" "$1"
   || { echo "  FAIL ...in $3 desk calls, more than the window's $WINDOW_PAGES pages"; fail=1; }
 set -- $(kg "MATCH $DESK WHERE c.openedOn < '$DAY' RETURN count(c) AS n" | cost)
 check "how many opened before $DAY" "$OPENED_BEFORE" "$1"
-# Not pushed (Chatwoot has no inclusive comparison), so this is the graph's answer over the whole
-# status, and it must still be right.
-set -- $(kg "MATCH $DESK WHERE c.openedOn >= '$DAY' RETURN count(c) AS n" | cost)
-check "how many opened on or after $DAY (filtered in the graph)" "$OPENED_SINCE" "$1"
+# Inclusive: Chatwoot has only the strict comparison, so the host sends `> the day before`
+# (granularity: day). The bound day is the median, so it must be counted.
+set -- $(kg "MATCH $DESK WHERE c.openedOn >= '$DAY' RETURN size(collect(DISTINCT c.id)) AS n" | cost)
+check "cases opened on or after $DAY, the bound day included" "$OPENED_SINCE" "$1"
+SINCE_PAGES=$(( (OPENED_SINCE + 24) / 25 ))
+[ "$3" -le "$SINCE_PAGES" ] && echo "  ok   ...in $3 desk call(s), the window's pages" \
+  || { echo "  FAIL ...in $3 desk calls, more than the window's $SINCE_PAGES pages"; fail=1; }
 set -- $(kg "MATCH (:ChatwootDesk {status:'open'})-[:HAS_CASE {ai: {fresh: true}}]->(c:SupportCase) WHERE c.updatedOn > '$UDAY' RETURN count(c) AS n" | cost)
 check "open cases updated after $UDAY" "$OPEN_UPDATED_AFTER" "$1"
 set -- $(kg "MATCH $DESK WHERE c.closedOn > '$CDAY' RETURN count(c) AS n" | cost)
