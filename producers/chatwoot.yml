@@ -74,12 +74,31 @@
   # trusted: the engine may skip its own comparison and push a LIMIT over what comes back. Each rule
   # was checked on a running desk against the same comparison applied to a full walk.
   pushdown:
-    # NOT pushed here: a status or a priority on the CASE. Chatwoot would apply either exactly (the
-    # company door below pushes both), but on this door an equality the source absorbs lets the
-    # engine answer `count(c)` from the envelope's total, and today that count comes back as 1
-    # whatever the total (`WHERE c.status = 'resolved' RETURN count(c)` answered 1 for 25 resolved
-    # cases). A wrong number is worse than a walk, so the graph applies them after the walk. The
-    # door's own key is the status lever: (:ChatwootDesk {status:'resolved'}) asks for those alone.
+    # A status or a priority on the CASE, as on the company door. Only `open` and `resolved`: the
+    # graph's `pending` is Chatwoot's pending AND snoozed, so a pending question walks the status and
+    # filters in the graph. Each was checked on a running desk: `all` AND status open is 1,692, the
+    # list's own open count. A count over a pushed status is Chatwoot's total for exactly that filter,
+    # one call (it read 1 for 25 resolved cases on hosts before embabel/me#4236).
+    - property: status
+      op: EQUALS
+      valuePattern: "^(open|resolved)$"
+      argPath: payload.-
+      clause:
+        attribute_key: status
+        filter_operator: equal_to
+        values: ["{value}"]
+        custom_attribute_type: null
+      linkPrevious: { query_operator: AND }
+    - property: priority
+      op: EQUALS
+      valuePattern: "^(urgent|high|medium|low)$"
+      argPath: payload.-
+      clause:
+        attribute_key: priority
+        filter_operator: equal_to
+        values: ["{value}"]
+        custom_attribute_type: null
+      linkPrevious: { query_operator: AND }
     #
     # THE BUSINESS DAYS. The desk defines opened_on, updated_on and closed_on as DATE attributes, and
     # Chatwoot compares a date attribute by the day, strictly: `is_greater_than` is `>` and
