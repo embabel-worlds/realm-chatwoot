@@ -137,8 +137,9 @@
     # day Chatwoot would compare. A business-day question uses openedOn, which is the truth for a
     # desk loaded from another system anyway (see the types' note on the two clocks).
   # "How many" is `meta.all_count` on the FIRST response, so it costs one call rather than a walk.
-  # A count over a pushed window is read from the window's own pages instead (7 calls for 163 cases,
-  # measured): the engine does not take the count off the envelope when a filter went with it.
+  # A count over a pushed status, priority or window is that filter's own total, one call too: 177
+  # cases opened after August 31 in 1 call, where reading the window's pages took 8. A host before
+  # embabel/me#4236 read the pages for a window and counted a pushed status as 1.
   # `records: "$"` reads the ENVELOPE: a conversation carries no total (me#1402).
   aggregates:
     - measure: count
