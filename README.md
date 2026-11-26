@@ -196,5 +196,9 @@ work, because no CRM realm can produce an `accountKey` yet: Odoo holds a website
 - A **thread is cached for a day, keyed on the conversation AND its last activity.** Chatwoot moves
   `last_activity_at` on every message it records, so a thread with something new in it is a new
   key and is read again; one that has not moved — every resolved case — is read once.
+- **A count over a pushed filter needs a host with embabel/me#4236.** The desk door sends a status,
+  a priority and a window on the business days to Chatwoot, and the count is the filter's own total.
+  An older host counted a pushed status as 1 and read every page of a window. The realm cannot say
+  so in `requires`, which names realms, not hosts, so check the host before trusting such a count.
 - With **`q`, Chatwoot ignores `status`** and its `all_count` is not the total; the text door sends
   no status and pages until a short page.
